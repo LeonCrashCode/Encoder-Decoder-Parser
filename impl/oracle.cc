@@ -29,7 +29,7 @@ void Oracle::ReadSentenceView(const std::string& line, dynet::Dict* dict, vector
     while(cur < line.size() && is_not_ws(line[cur])) { ++cur; }
     unsigned end = cur;
     if (end > start) {
-      unsigned x = dict->Convert(line.substr(start, end - start));
+      unsigned x = dict->convert(line.substr(start, end - start));
       sent->push_back(x);
     }
   }
@@ -46,8 +46,8 @@ void TopDownOracle::load_oracle(const string& file, bool is_training) {
   assert(in);
   const string kREDUCE = "REDUCE";
   const string kSHIFT = "SHIFT";
-  const int kREDUCE_INT = ad->Convert("REDUCE");
-  const int kSHIFT_INT = ad->Convert("SHIFT");
+  const int kREDUCE_INT = ad->convert("REDUCE");
+  const int kSHIFT_INT = ad->convert("SHIFT");
   int lc = 0;
   string line;
   vector<int> cur_acts;
@@ -55,7 +55,7 @@ void TopDownOracle::load_oracle(const string& file, bool is_training) {
     ++lc;
     //cerr << "line number = " << lc << endl;
     cur_acts.clear();
-    if (line.size() == 0 || (line[0] == '!' && line[1] == '#')) continue;
+    if (line.size() == 0 || (line[0] == '#' && line[2] == '(')) continue;
     sents.resize(sents.size() + 1);
     auto& cur_sent = sents.back();
     if (is_training) {  // at training time, we load both "UNKified" versions of the data, and raw versions
@@ -89,10 +89,10 @@ void TopDownOracle::load_oracle(const string& file, bool is_training) {
       if (line == kREDUCE) {
         cur_acts.push_back(kREDUCE_INT);
       } else if (line.find("NT(") == 0) {
-        // Convert NT
-        nd->Convert(line.substr(3, line.size() - 4));
+        // convert NT
+        nd->convert(line.substr(3, line.size() - 4));
         // NT(X) is put into the actions list as NT(X)
-        cur_acts.push_back(ad->Convert(line));
+        cur_acts.push_back(ad->convert(line));
       } else if (line == kSHIFT) {
         cur_acts.push_back(kSHIFT_INT);
         termc++;
@@ -120,8 +120,8 @@ void TopDownOracleGen::load_oracle(const string& file) {
   assert(in);
   const string kREDUCE = "REDUCE";
   const string kSHIFT = "SHIFT";
-  const int kREDUCE_INT = ad->Convert("REDUCE");
-  const int kSHIFT_INT = ad->Convert("SHIFT");
+  const int kREDUCE_INT = ad->convert("REDUCE");
+  const int kSHIFT_INT = ad->convert("SHIFT");
   int lc = 0;
   string line;
   vector<int> cur_acts;
@@ -129,7 +129,7 @@ void TopDownOracleGen::load_oracle(const string& file) {
     ++lc;
     //cerr << "line number = " << lc << endl;
     cur_acts.clear();
-    if (line.size() == 0 || (line[0] == '!' && line[1] == '#')) continue;
+    if (line.size() == 0 || (line[0] == '#' && line[2] == '(')) continue;
     sents.resize(sents.size() + 1);
     auto& cur_sent = sents.back();
     getline(in, line);
@@ -149,10 +149,10 @@ void TopDownOracleGen::load_oracle(const string& file) {
       if (line == kREDUCE) {
         cur_acts.push_back(kREDUCE_INT);
       } else if (line.find("NT(") == 0) {
-        // Convert NT
-        nd->Convert(line.substr(3, line.size() - 4));
+        // convert NT
+        nd->convert(line.substr(3, line.size() - 4));
         // NT(X) is put into the actions list as NT(X)
-        cur_acts.push_back(ad->Convert(line));
+        cur_acts.push_back(ad->convert(line));
       } else if (line == kSHIFT) {
         cur_acts.push_back(kSHIFT_INT);
         termc++;
@@ -178,8 +178,8 @@ void TopDownOracleGen2::load_oracle(const string& file) {
   cerr << "Loading top-down generative oracle from " << file << endl;
   dynet::compressed_ifstream in(file.c_str());
   assert(in);
-  const int kREDUCE_INT = ad->Convert("REDUCE");
-  const int kSHIFT_INT = ad->Convert("SHIFT");
+  const int kREDUCE_INT = ad->convert("REDUCE");
+  const int kSHIFT_INT = ad->convert("SHIFT");
   int lc = 0;
   string line;
   vector<int> cur_acts;
@@ -200,11 +200,11 @@ void TopDownOracleGen2::load_oracle(const string& file) {
         while(end < len && line[end] != ' ') { end++; }
         assert(end > start);
         //cerr << "Checkpoint 1.5" << endl;
-        int ntidx = nd->Convert(line.substr(start, end - start));
+        int ntidx = nd->convert(line.substr(start, end - start));
         //cerr << "Checkpoint 2" << endl;
-        string act = "NT(" + nd->Convert(ntidx) + ')';
+        string act = "NT(" + nd->convert(ntidx) + ')';
         //cerr << "Checkpoint 3" << endl;
-        cur_acts.push_back(ad->Convert(act));
+        cur_acts.push_back(ad->convert(act));
         //cerr << "Checkpoint 4" << endl;
         i = end;
         if (i >= len || line[i] == ')') { cerr << "Malformed input: " << line << endl; abort(); }
@@ -223,7 +223,7 @@ void TopDownOracleGen2::load_oracle(const string& file) {
       unsigned end = start + 1;
       while(end < len && line[end] != ' ' && line[end] != ')') { end++; }
       if (end >= len) { cerr << "Malformed input: " << line << endl; abort(); }
-      int term = d->Convert(line.substr(start, end - start));
+      int term = d->convert(line.substr(start, end - start));
       raw.push_back(term);
       cur_acts.push_back(kSHIFT_INT);
       i = end;

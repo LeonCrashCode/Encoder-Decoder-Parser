@@ -37,7 +37,7 @@ void ReadEmbeddings_word2vec(const string& fname,
     vector<float> v(dims);
     istringstream iss(line);
     iss >> word;
-    unsigned wordid = dict->Convert(word);
+    unsigned wordid = dict->convert(word);
     for (unsigned i = 0; i < dims; ++i)
       iss >> v[i];
     (*pretrained)[wordid] = v;
