@@ -2,7 +2,8 @@ CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
 
 foreach(TARGET
 	greedy_attention_sb_cond
-	greedy_attention_sb_cond_batch)
+	greedy_attention_sb_cond_batch
+	)
   ADD_EXECUTABLE(${TARGET} ${TARGET}.cc)
   if (WITH_CUDA_BACKEND)
     target_link_libraries(${TARGET} gdynet ${LIBS})

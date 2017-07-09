@@ -134,9 +134,9 @@ struct ParserBuilder {
   Parameter p_combo2rt;
   Parameter p_rtbias;
   explicit ParserBuilder(Model* model, const unordered_map<unsigned, vector<float>>& pretrained) :
-      state_lstm(1, STATE_INPUT_DIM ,STATE_HIDDEN_DIM, model),
-      l2rbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, model),
-      r2lbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, model),
+      state_lstm(1, STATE_INPUT_DIM ,STATE_HIDDEN_DIM, *model),
+      l2rbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
+      r2lbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
       p_w(model->add_lookup_parameters(VOCAB_SIZE, {INPUT_DIM})),
       p_a(model->add_lookup_parameters(ACTION_SIZE, {ACTION_DIM})),
       p_r(model->add_lookup_parameters(ACTION_SIZE, {REL_DIM})),
@@ -653,15 +653,15 @@ int main(int argc, char** argv) {
     Trainer* sgd = NULL;
     unsigned method = conf["train_methods"].as<unsigned>();
     if(method == 0)
-        sgd = new SimpleSGDTrainer(&model,0.1, 0.1);
+        sgd = new SimpleSGDTrainer(model,0.1, 0.1);
     else if(method == 1)
-        sgd = new MomentumSGDTrainer(&model,0.01, 0.9, 0.1);
+        sgd = new MomentumSGDTrainer(model,0.01, 0.9, 0.1);
     else if(method == 2){
-        sgd = new AdagradTrainer(&model);
+        sgd = new AdagradTrainer(model);
         sgd->clipping_enabled = false;
     }
     else if(method == 3){
-        sgd = new AdamTrainer(&model);
+        sgd = new AdamTrainer(model);
         sgd->clipping_enabled = false;
     }
 

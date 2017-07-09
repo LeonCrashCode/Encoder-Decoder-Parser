@@ -27,10 +27,9 @@
 #include "dynet/rnn.h"
 #include "c2.h"
 
+unsigned batch_size = 50;
 float pdrop = 0.3;
 bool DEBUG = false;
-unsigned batch_size = 100;
-
 cpyp::Corpus corpus;
 volatile bool requested_stop = false;
 unsigned LAYERS = 1;
@@ -136,9 +135,9 @@ struct ParserBuilder {
   Parameter p_combo2rt;
   Parameter p_rtbias;
   explicit ParserBuilder(Model* model, const unordered_map<unsigned, vector<float>>& pretrained) :
-      state_lstm(1, STATE_INPUT_DIM ,STATE_HIDDEN_DIM, model),
-      l2rbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, model),
-      r2lbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, model),
+      state_lstm(1, STATE_INPUT_DIM ,STATE_HIDDEN_DIM, *model),
+      l2rbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
+      r2lbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
       p_w(model->add_lookup_parameters(VOCAB_SIZE, {INPUT_DIM})),
       p_a(model->add_lookup_parameters(ACTION_SIZE, {ACTION_DIM})),
       p_r(model->add_lookup_parameters(ACTION_SIZE, {REL_DIM})),
@@ -655,15 +654,15 @@ int main(int argc, char** argv) {
     Trainer* sgd = NULL;
     unsigned method = conf["train_methods"].as<unsigned>();
     if(method == 0)
-        sgd = new SimpleSGDTrainer(&model,0.1, 0.1);
+        sgd = new SimpleSGDTrainer(model,0.1, 0.1);
     else if(method == 1)
-        sgd = new MomentumSGDTrainer(&model,0.01, 0.9, 0.1);
+        sgd = new MomentumSGDTrainer(model,0.01, 0.9, 0.1);
     else if(method == 2){
-        sgd = new AdagradTrainer(&model);
+        sgd = new AdagradTrainer(model);
         sgd->clipping_enabled = false;
     }
     else if(method == 3){
-        sgd = new AdamTrainer(&model);
+        sgd = new AdamTrainer(model);
         sgd->clipping_enabled = false;
     }
 
@@ -686,11 +685,11 @@ int main(int argc, char** argv) {
       for (unsigned sii = 0; sii < status_every_i_iterations; ++sii) {
            
 	   ComputationGraph hg;
-	   vector<Expression> batch_nll;
+           vector<Expression> batch_nll;
 
-	   for(unsigned batch = 0; batch <= batch_size; ++batch){
-	   
-	   if (si == corpus.nsentences) {
+           for(unsigned batch = 0; batch <= batch_size; ++batch){
+
+           if (si == corpus.nsentences) {
              si = 0;
              if (first) { first = false; } else { sgd->update_epoch(); }
              cerr << "**SHUFFLE\n";
@@ -703,21 +702,21 @@ int main(int argc, char** argv) {
              for (auto& w : tsentence)
                if (singletons.count(w) && dynet::rand01() < unk_prob) w = kUNK;
            }
-	   const vector<unsigned>& sentencePos=corpus.sentencesPos[order[si]]; 
-	   const vector<unsigned>& actions=corpus.correct_act_sent[order[si]];
+           const vector<unsigned>& sentencePos=corpus.sentencesPos[order[si]];
+           const vector<unsigned>& actions=corpus.correct_act_sent[order[si]];
            Expression nll = parser.log_prob_parser(&hg,sentence,tsentence,sentencePos,actions,corpus.actions,corpus.intToWords,&right,NULL,true);
            double lp = as_scalar(hg.incremental_forward(nll));
            if (lp < 0) {
              cerr << "Log prob < 0 on sentence " << order[si] << ": lp=" << lp << endl;
              assert(lp >= 0.0);
            }
-	   batch_nll.push_back(nll);
+           batch_nll.push_back(nll);
            llh += lp;
            ++si;
            trs += actions.size();
-	   }
-	   hg.backward(sum(batch_nll));
-	   sgd->update(1.0);
+           }
+           hg.backward(sum(batch_nll));
+           sgd->update(1.0);
       }
       sgd->status();
       time_t time_now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
