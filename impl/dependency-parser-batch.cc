@@ -27,7 +27,6 @@
 #include "dynet/rnn.h"
 #include "c2.h"
 
-unsigned batch_size = 50;
 float pdrop = 0.3;
 bool DEBUG = false;
 cpyp::Corpus corpus;
@@ -368,6 +367,13 @@ if(DEBUG)	std::cerr<<"action index " << action_count<<"\n";
         current_valid_actions.push_back(a);
       }
 if(DEBUG)	std::cerr<<"possible action " << current_valid_actions.size()<<"\n";
+if(DEBUG){
+	
+	for(unsigned i = 0; i < current_valid_actions.size(); i ++){
+		std::cerr<<current_valid_actions[i]<<" ";
+	}
+	std::cerr<<"\n";
+}
       //stack attention
       Expression prev_h = state_lstm.final_h()[0];
       vector<Expression> s_att;
@@ -419,13 +425,17 @@ if(DEBUG)	std::cerr<<"attention ok\n";
       Expression n_combo = rectify(combo);
       Expression rt = affine_transform({rtbias, combo2rt, n_combo});
 if(DEBUG)	std::cerr<<"to action layer ok\n";
-      Expression adiste = log_softmax(rt, current_valid_actions);
+      Expression rts = select_rows(rt, current_valid_actions);
+      //Expression adiste = log_softmax(rt, current_valid_actions);
+      Expression adiste = log_softmax(rts);
+if(DEBUG)       std::cerr<<"select action ok\n";
       vector<float> adist = as_vector(hg->incremental_forward(adiste));
-      double best_score = adist[current_valid_actions[0]];
+      //double best_score = adist[current_valid_actions[0]];
+      double best_score = adist[0];
       unsigned best_a = current_valid_actions[0];
       for (unsigned i = 1; i < current_valid_actions.size(); ++i) {
-        if (adist[current_valid_actions[i]] > best_score) {
-          best_score = adist[current_valid_actions[i]];
+        if (adist[i] > best_score) {
+          best_score = adist[i];
           best_a = current_valid_actions[i];
         }
       }
@@ -682,12 +692,11 @@ int main(int argc, char** argv) {
     cerr << "TRAINING STARTED AT: " << localtime(&time_start) << endl;
     while(!requested_stop) {
       ++iter;
-      for (unsigned sii = 0; sii < status_every_i_iterations; ++sii) {
-           
-	   ComputationGraph hg;
-           vector<Expression> batch_nll;
 
-           for(unsigned batch = 0; batch <= batch_size; ++batch){
+      {
+      ComputationGraph hg;
+      vector<Expression> batch_nll;
+      for (unsigned sii = 0; sii < status_every_i_iterations; ++sii) {
 
            if (si == corpus.nsentences) {
              si = 0;
@@ -714,11 +723,12 @@ int main(int argc, char** argv) {
            llh += lp;
            ++si;
            trs += actions.size();
-           }
-           hg.backward(sum(batch_nll));
-           sgd->update(1.0);
       }
+      hg.backward(sum(batch_nll));
+      sgd->update(1.0);
       sgd->status();
+      }
+
       time_t time_now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
       cerr << "update #" << iter << " (epoch " << (tot_seen / corpus.nsentences) << " |time=" << localtime(&time_now) << ")\tllh: "<< llh<<" ppl: " << exp(llh / trs) << " err: " << (trs - right) / trs << endl;
       llh = trs = right = 0;
