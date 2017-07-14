@@ -38,7 +38,6 @@ using namespace std;
 
 Params params;
 
-vector<unsigned> possible_actions;
 unordered_map<unsigned, vector<float>> pretrained;
 
 struct ParserBuilder {
@@ -299,7 +298,7 @@ if(params.debug)	std::cerr<<"bilstm ok\n";
 if(params.debug)	std::cerr<<"action index " << action_count<<"\n";
      // get list of possible actions for the current parser state
       vector<unsigned> current_valid_actions;
-      for (auto a: possible_actions) {
+      for (unsigned a = 0; a < ACTION_SIZE; ++a) {
         if (IsActionForbidden(setOfActions[a], bufferi.size(), stacki.size(), stacki))
           continue;
         current_valid_actions.push_back(a);
@@ -494,7 +493,6 @@ int main(int argc, char** argv) {
   params.state_input_dim = params.action_dim + params.bilstm_hidden_dim*4;
   params.state_hidden_dim = params.bilstm_hidden_dim * 2;
   
-  cerr <<params.state_input_dim << " " << params.state_hidden_dim<<"\n";
   cerr << "Unknown word strategy: ";
   if (params.unk_strategy) {
     cerr << "STOCHASTIC REPLACEMENT\n";
@@ -518,10 +516,13 @@ int main(int argc, char** argv) {
   const string fname = os.str();
   cerr << "Writing parameters to file: " << fname << endl;
 
+//=========================================================================================================================
+
   corpus.load_correct_actions(params.train_file);	
   const unsigned kUNK = corpus.get_or_add_word(cpyp::Corpus::UNK);
   kROOT_SYMBOL = corpus.get_or_add_word(ROOT_SYMBOL);
 
+  //reading pretrained words embeddings
   if (params.words_file != "") {
     pretrained[kUNK] = vector<float>(params.pretrained_dim, 0);
     cerr << "Loading from " << params.words_file << " with" << params.pretrained_dim << " dimensions\n";
@@ -553,10 +554,9 @@ int main(int argc, char** argv) {
   VOCAB_SIZE = corpus.nwords + 1;
   ACTION_SIZE = corpus.nactions + 1;
   POS_SIZE = corpus.npos + 10;  // bad way of dealing with the fact that we may see new POS tags in the test set
-  possible_actions.resize(corpus.nactions);
-  for (unsigned i = 0; i < corpus.nactions; ++i)
-    possible_actions[i] = i;
 
+//=============================================================================================================================
+  
   Model model;
   ParserBuilder parser(&model, pretrained);
   if (params.model_file != "") {

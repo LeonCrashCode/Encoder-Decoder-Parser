@@ -494,7 +494,6 @@ int main(int argc, char** argv) {
   params.state_input_dim = params.action_dim + params.bilstm_hidden_dim*4;
   params.state_hidden_dim = params.bilstm_hidden_dim * 2;
   
-  cerr <<params.state_input_dim << " " << params.state_hidden_dim<<"\n";
   cerr << "Unknown word strategy: ";
   if (params.unk_strategy) {
     cerr << "STOCHASTIC REPLACEMENT\n";

@@ -12,10 +12,6 @@
 #include <unistd.h>
 #include <signal.h>
 
-#include <boost/archive/text_oarchive.hpp>
-#include <boost/archive/text_iarchive.hpp>
-#include <boost/program_options.hpp>
-
 #include "dynet/training.h"
 #include "dynet/dynet.h"
 #include "dynet/expr.h"
@@ -24,88 +20,26 @@
 #include "dynet/rnn.h"
 #include "dynet/dict.h"
 #include "dynet/cfsm-builder.h"
+#include "dynet/io.h"
 
 #include "impl/oracle.h"
-#include "impl/pretrained.h"
-#include "impl/compressed-fstream.h"
-#include "impl/eval.h"
+#include "impl/cl-args.h"
 
 // dictionaries
 dynet::Dict termdict, ntermdict, adict, posdict;
-bool DEBUG = false;
-volatile bool requested_stop = false;
-unsigned LAYERS = 2;
-unsigned INPUT_DIM = 40;
-unsigned PRETRAINED_DIM = 50;
-unsigned ACTION_DIM = 36;
-unsigned POS_DIM = 10;
-unsigned REL_DIM = 8;
 
-unsigned BILSTM_INPUT_DIM = 64;
-unsigned BILSTM_HIDDEN_DIM = 64;
-unsigned ATTENTION_HIDDEN_DIM = 64;
-
-unsigned STATE_INPUT_DIM = ACTION_DIM + ATTENTION_HIDDEN_DIM;
-unsigned STATE_HIDDEN_DIM = 64; 
-
-float ALPHA = 1.f;
-unsigned N_SAMPLES = 1;
+bool requested_stop =false;
 unsigned ACTION_SIZE = 0;
 unsigned VOCAB_SIZE = 0;
 unsigned NT_SIZE = 0;
-float DROPOUT = 0.0f;
 unsigned POS_SIZE = 0;
-std::map<int,int> action2NTindex;  // pass in index of action NT(X), return index of X
-bool USE_POS = false;  // in discriminative parser, incorporate POS information in token embedding
 
-using namespace dynet::expr;
+std::map<int,int> action2NTindex;  // pass in index of action NT(X), return index of X
 using namespace dynet;
 using namespace std;
-namespace po = boost::program_options;
-
-
-vector<unsigned> possible_actions;
+Params params;
 unordered_map<unsigned, vector<float>> pretrained;
 vector<bool> singletons; // used during training
-
-void InitCommandLine(int argc, char** argv, po::variables_map* conf) {
-  po::options_description opts("Configuration options");
-  opts.add_options()
-        ("training_data,T", po::value<string>(), "List of Transitions - Training corpus")
-        ("dev_data,d", po::value<string>(), "Development corpus")
-        ("bracketing_dev_data,C", po::value<string>(), "Development bracketed corpus")
-        ("test_data,p", po::value<string>(), "Test corpus")
-        ("dropout,D", po::value<float>(), "Dropout rate")
-        ("samples,s", po::value<unsigned>(), "Sample N trees for each test sentence instead of greedy max decoding")
-        ("alpha,a", po::value<float>(), "Flatten (0 < alpha < 1) or sharpen (1 < alpha) sampling distribution")
-        ("model,m", po::value<string>(), "Load saved model from this file")
-        ("use_pos_tags,P", "make POS tags visible to parser")
-        ("layers", po::value<unsigned>()->default_value(1), "number of LSTM layers")
-        ("action_dim", po::value<unsigned>()->default_value(16), "action embedding size")
-        ("pos_dim", po::value<unsigned>()->default_value(12), "POS dimension")
-	("input_dim", po::value<unsigned>()->default_value(32), "input embedding size")
-	("bilstm_input_dim", po::value<unsigned>()->default_value(64), "bilstm input dimension")
-        ("bilstm_hidden_dim", po::value<unsigned>()->default_value(64), "bilstm hidden dimension")
-        ("attention_hidden_dim", po::value<unsigned>()->default_value(64), "attention hidden dimension")
-        ("state_hidden_dim", po::value<unsigned>()->default_value(64), "state hidden dimension")
-        ("pretrained_dim", po::value<unsigned>()->default_value(50), "pretrained input dimension")
-        ("train,t", "Should training be run?")
-        ("words,w", po::value<string>(), "Pretrained word embeddings")
-        ("debug", "debug")
-	("help,h", "Help");
-      
-  po::options_description dcmdline_options;
-  dcmdline_options.add(opts);
-  po::store(parse_command_line(argc, argv, dcmdline_options), *conf);
-  if (conf->count("help")) {
-    cerr << dcmdline_options << endl;
-    exit(1);
-  }
-  if (conf->count("training_data") == 0) {
-    cerr << "Please specify --traing_data (-T): this is required to determine the vocabulary mapping, even if the parser is used in prediction mode.\n";
-    exit(1);
-  }
-}
 
 struct ParserBuilder {
 
@@ -143,41 +77,41 @@ struct ParserBuilder {
   Parameter p_rtbias;
 
   explicit ParserBuilder(Model* model, const unordered_map<unsigned, vector<float>>& pretrained) :
-      state_lstm(1, STATE_INPUT_DIM ,STATE_HIDDEN_DIM, *model),
-      l2rbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
-      r2lbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
-      p_w(model->add_lookup_parameters(VOCAB_SIZE, {INPUT_DIM})),
-      p_a(model->add_lookup_parameters(ACTION_SIZE, {ACTION_DIM})),
-      p_r(model->add_lookup_parameters(ACTION_SIZE, {REL_DIM})),
-      p_w2l(model->add_parameters({BILSTM_INPUT_DIM, INPUT_DIM})),
-      p_lb(model->add_parameters({BILSTM_INPUT_DIM})),
-      p_sent_start(model->add_parameters({BILSTM_INPUT_DIM})),
-      p_sent_end(model->add_parameters({BILSTM_INPUT_DIM})),
-      p_s_input2att(model->add_parameters({ATTENTION_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_s_h2att(model->add_parameters({ATTENTION_HIDDEN_DIM, STATE_HIDDEN_DIM})),
-      p_s_attbias(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_s_att2attexp(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_s_att2combo(model->add_parameters({STATE_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_b_input2att(model->add_parameters({ATTENTION_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_b_h2att(model->add_parameters({ATTENTION_HIDDEN_DIM, STATE_HIDDEN_DIM})),
-      p_b_attbias(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_b_att2attexp(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_b_att2combo(model->add_parameters({STATE_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_h2combo(model->add_parameters({STATE_HIDDEN_DIM, STATE_HIDDEN_DIM})),
-      p_combobias(model->add_parameters({STATE_HIDDEN_DIM})),
-      p_combo2rt(model->add_parameters({ACTION_SIZE, STATE_HIDDEN_DIM})),
+      state_lstm(1, params.state_input_dim ,params.state_hidden_dim, *model),
+      l2rbuilder(params.layers, params.bilstm_input_dim, params.bilstm_hidden_dim, *model),
+      r2lbuilder(params.layers, params.bilstm_input_dim, params.bilstm_hidden_dim, *model),
+      p_w(model->add_lookup_parameters(VOCAB_SIZE, {params.input_dim})),
+      p_a(model->add_lookup_parameters(ACTION_SIZE, {params.action_dim})),
+      p_r(model->add_lookup_parameters(ACTION_SIZE, {params.rel_dim})),
+      p_w2l(model->add_parameters({params.bilstm_input_dim, params.input_dim})),
+      p_lb(model->add_parameters({params.bilstm_input_dim})),
+      p_sent_start(model->add_parameters({params.bilstm_input_dim})),
+      p_sent_end(model->add_parameters({params.bilstm_input_dim})),
+      p_s_input2att(model->add_parameters({params.attention_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_s_h2att(model->add_parameters({params.attention_hidden_dim, params.state_hidden_dim})),
+      p_s_attbias(model->add_parameters({params.attention_hidden_dim})),
+      p_s_att2attexp(model->add_parameters({params.attention_hidden_dim})),
+      p_s_att2combo(model->add_parameters({params.state_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_b_input2att(model->add_parameters({params.attention_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_b_h2att(model->add_parameters({params.attention_hidden_dim, params.state_hidden_dim})),
+      p_b_attbias(model->add_parameters({params.attention_hidden_dim})),
+      p_b_att2attexp(model->add_parameters({params.attention_hidden_dim})),
+      p_b_att2combo(model->add_parameters({params.state_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_h2combo(model->add_parameters({params.state_hidden_dim, params.state_hidden_dim})),
+      p_combobias(model->add_parameters({params.state_hidden_dim})),
+      p_combo2rt(model->add_parameters({ACTION_SIZE, params.state_hidden_dim})),
       p_rtbias(model->add_parameters({ACTION_SIZE})){
 
-    if (USE_POS) {
-      p_p = model->add_lookup_parameters(POS_SIZE, {POS_DIM});
-      p_p2l = model->add_parameters({BILSTM_INPUT_DIM, POS_DIM});
+    if (params.use_pos) {
+      p_p = model->add_lookup_parameters(POS_SIZE, {params.pos_dim});
+      p_p2l = model->add_parameters({params.bilstm_input_dim, params.pos_dim});
     }
-//    buffer_lstm = new LSTMBuilder(LAYERS, LSTM_INPUT_DIM, HIDDEN_DIM, model);
+//    buffer_lstm = new LSTMBuilder(params.layers, LSTM_params.input_dim, HIDDEN_DIM, model);
     if (pretrained.size() > 0) {
-      p_t = model->add_lookup_parameters(VOCAB_SIZE, {PRETRAINED_DIM});
+      p_t = model->add_lookup_parameters(VOCAB_SIZE, {params.pretrained_dim});
       for (auto it : pretrained)
         p_t.initialize(it.first, it.second);
-      p_t2l = model->add_parameters({BILSTM_INPUT_DIM, PRETRAINED_DIM});
+      p_t2l = model->add_parameters({params.bilstm_input_dim, params.pretrained_dim});
     }
   }
 
@@ -221,11 +155,9 @@ Expression log_prob_parser(ComputationGraph* hg,
                      const parser::Sentence& sent,
                      const vector<int>& correct_actions,
                      double *right,
-                     bool is_evaluation,
 		     vector<unsigned>* results,
+		     bool train,
                      bool sample = false) {
-    const bool build_training_graph = correct_actions.size() > 0;
-    bool apply_dropout = (DROPOUT && !is_evaluation);
     
     l2rbuilder.new_graph(*hg);
     r2lbuilder.new_graph(*hg);
@@ -235,14 +167,14 @@ Expression log_prob_parser(ComputationGraph* hg,
     Expression lb = parameter(*hg, p_lb);
     Expression w2l = parameter(*hg, p_w2l);
     Expression p2l;
-    if (USE_POS)
+    if (params.use_pos)
       p2l = parameter(*hg, p_p2l);
     Expression t2l;
     if (pretrained.size()>0)
       t2l = parameter(*hg, p_t2l); 
     state_lstm.new_graph(*hg);
     state_lstm.start_new_sequence();
-    //state_lstm.start_new_sequence({zeroes(*hg, {STATE_HIDDEN_DIM}), state_start});
+    //state_lstm.start_new_sequence({zeroes(*hg, {params.state_hidden_dim}), state_start});
     
     Expression sent_start = parameter(*hg, p_sent_start);
     Expression sent_end = parameter(*hg, p_sent_end);
@@ -267,10 +199,10 @@ Expression log_prob_parser(ComputationGraph* hg,
     vector<Expression> input_expr;
     
 	
-    if (apply_dropout) {
-      l2rbuilder.set_dropout(DROPOUT);
-      r2lbuilder.set_dropout(DROPOUT);
-      state_lstm.set_dropout(DROPOUT);
+    if (train) {
+      l2rbuilder.set_dropout(params.pdrop);
+      r2lbuilder.set_dropout(params.pdrop);
+      state_lstm.set_dropout(params.pdrop);
     } else {
       l2rbuilder.disable_dropout();
       r2lbuilder.disable_dropout();
@@ -279,12 +211,14 @@ Expression log_prob_parser(ComputationGraph* hg,
 
     for (unsigned i = 0; i < sent.size(); ++i) {
       int wordid = sent.raw[i]; // this will be equal to unk at dev/test
-      if (build_training_graph && singletons.size() > wordid && singletons[wordid] && rand01() > 0.5)
+      if (train && singletons.size() > wordid && singletons[wordid] && rand01() > params.unk_prob)
           wordid = sent.unk[i];
+      if (!train)
+	  wordid = sent.unk[i];
 
       Expression w =lookup(*hg, p_w, wordid);
       vector<Expression> args = {lb, w2l, w}; // learn embeddings
-      if (USE_POS) { // learn POS tag?
+      if (params.use_pos) { // learn POS tag?
         Expression p = lookup(*hg, p_p, sent.pos[i]);
         args.push_back(p2l);
         args.push_back(p);
@@ -296,11 +230,11 @@ Expression log_prob_parser(ComputationGraph* hg,
       }
       else{
         args.push_back(t2l);
-        args.push_back(zeroes(*hg,{PRETRAINED_DIM}));
+        args.push_back(zeroes(*hg,{params.pretrained_dim}));
       }
       input_expr.push_back(rectify(affine_transform(args)));
     }
-if(DEBUG)	std::cerr<<"lookup table ok\n";
+if(params.debug)	std::cerr<<"lookup table ok\n";
     vector<Expression> l2r(sent.size());
     vector<Expression> r2l(sent.size());
     Expression l2r_s = l2rbuilder.add_input(sent_start);
@@ -317,7 +251,7 @@ if(DEBUG)	std::cerr<<"lookup table ok\n";
     }
     Expression sent_start_expr = concatenate({l2r_s, r2l_s});
     Expression sent_end_expr = concatenate({l2r_e, r2l_e});
-if(DEBUG)	std::cerr<<"bilstm ok\n";
+if(params.debug)	std::cerr<<"bilstm ok\n";
     // dummy symbol to represent the empty buffer
 
     vector<int> bufferi(sent.size() + 1);  // position of the words in the sentence
@@ -344,27 +278,27 @@ if(DEBUG)	std::cerr<<"bilstm ok\n";
     vector<Expression> r2lhc = r2lbuilder.final_s();
 
     vector<Expression> initc;
-    //for(unsigned i = 0; i < LAYERS; i ++){
+    //for(unsigned i = 0; i < params.layers; i ++){
       initc.push_back(concatenate({l2rhc.back(),r2lhc.back()}));
     //}
 
-    //for(unsigned i = 0; i < LAYERS; i ++){
-      initc.push_back(zeroes(*hg, {BILSTM_HIDDEN_DIM*2}));
+    //for(unsigned i = 0; i < params.layers; i ++){
+      initc.push_back(zeroes(*hg, {params.bilstm_hidden_dim*2}));
     //}
     state_lstm.start_new_sequence(initc);
 
     while(stacki.size() > 2 || bufferi.size() > 1) {
       // get list of possible actions for the current parser state
-if(DEBUG) cerr<< "action_count " << action_count <<"\n";
+if(params.debug) cerr<< "action_count " << action_count <<"\n";
 	current_valid_actions.clear();
-if(DEBUG) cerr<< "nopen_parens: "<<nopen_parens<<"\n";
-      for (auto a: possible_actions) {
+if(params.debug) cerr<< "nopen_parens: "<<nopen_parens<<"\n";
+      for (unsigned a = 0; a < ACTION_SIZE; a++) {
         if (IsActionForbidden_Discriminative(adict.convert(a), prev_a, bufferi.size(), stacki.size(), nopen_parens))
           continue;
         current_valid_actions.push_back(a);
       }
       //cerr << "valid actions = " << current_valid_actions.size() << endl;
-if(DEBUG){
+if(params.debug){
         cerr <<"current_valid_actions: "<<current_valid_actions.size()<<" :";
         for(unsigned i = 0; i < current_valid_actions.size(); i ++){
                 cerr<<adict.convert(current_valid_actions[i])<<" ";
@@ -383,7 +317,7 @@ if(DEBUG){
       }
       Expression s_att_col = transpose(concatenate_cols(s_att));
       Expression s_attexp = softmax(s_att_col * s_att2attexp);
-if(DEBUG){
+if(params.debug){
 	auto s_see = as_vector(hg->incremental_forward(s_attexp));
 	for(unsigned i = 0; i < s_see.size(); i ++){
 		cerr<<s_see[i]<<" ";
@@ -403,7 +337,7 @@ if(DEBUG){
       b_input.push_back(sent_end_expr);
       Expression b_att_col = transpose(concatenate_cols(b_att));
       Expression b_attexp = softmax(b_att_col * b_att2attexp);
-if(DEBUG){
+if(params.debug){
 	auto b_see = as_vector(hg->incremental_forward(b_attexp));
 	for(unsigned i = 0; i < b_see.size(); i ++){
 		cerr<<b_see[i]<<" ";
@@ -413,13 +347,13 @@ if(DEBUG){
       Expression b_input_col = concatenate_cols(b_input);
       Expression b_att_pool = b_input_col * b_attexp;
 
-if(DEBUG)	std::cerr<<"attention ok\n";
+if(params.debug)	std::cerr<<"attention ok\n";
       Expression combo = affine_transform({combobias, h2combo, prev_h, s_att2combo, s_att_pool, b_att2combo, b_att_pool});
       Expression n_combo = rectify(combo);
       Expression r_t = affine_transform({rtbias, combo2rt, n_combo});
-if(DEBUG)	std::cerr<<"to action layer ok\n";
+if(params.debug)	std::cerr<<"to action layer ok\n";
  
-      if (sample && ALPHA != 1.0f) r_t = r_t * ALPHA;
+      if (sample) r_t = r_t * params.alpha;
       // adist = log_softmax(r_t, current_valid_actions)
       Expression adiste = log_softmax(r_t, current_valid_actions);
       vector<float> adist = as_vector(hg->incremental_forward(adiste));
@@ -444,7 +378,7 @@ if(DEBUG)	std::cerr<<"to action layer ok\n";
         }
       }
       unsigned action = model_action;
-      if (build_training_graph) {  // if we have reference actions (for training) use the reference action
+      if (train) {  // if we have reference actions (for training) use the reference action
         if (action_count >= correct_actions.size()) {
           cerr << "Correct action list exhausted, but not in final parser state.\n";
           abort();
@@ -470,13 +404,13 @@ if(DEBUG)	std::cerr<<"to action layer ok\n";
       const char ac = actionString[0];
       const char ac2 = actionString[1];
       prev_a = ac;
-if(DEBUG){
+if(params.debug){
 
       cerr << "MODEL_ACT: " << adict.convert(model_action)<<" ";
       cerr <<"GOLD_ACT: " << actionString<<"\n";
 }
 
-if(DEBUG) {
+if(params.debug) {
 	cerr <<"stack_buffer_split:" << stack_buffer_split <<"\n";
         cerr <<"stacki: ";
         for(unsigned i = 0; i < stacki.size(); i ++){
@@ -532,7 +466,7 @@ if(DEBUG) {
         is_open_paren.push_back(-1); // we just closed a paren at this position
       }
     }
-    if (build_training_graph && action_count != correct_actions.size()) {
+    if (train && action_count != correct_actions.size()) {
       cerr << "Unexecuted actions remain but final state reached!\n";
       abort();
     }
@@ -601,76 +535,67 @@ void signal_callback_handler(int /* signum */) {
 }
 
 int main(int argc, char** argv) {
-  dynet::initialize(argc, argv, 1989121011);
-
-  cerr << "COMMAND LINE:"; 
+  DynetParams dynet_params = extract_dynet_params(argc, argv);
+  dynet_params.random_seed = 1989121013;
+  dynet::initialize(dynet_params);
+  cerr << "COMMAND:";
   for (unsigned i = 0; i < static_cast<unsigned>(argc); ++i) cerr << ' ' << argv[i];
   cerr << endl;
   unsigned status_every_i_iterations = 100;
 
-  po::variables_map conf;
-  InitCommandLine(argc, argv, &conf);
-  USE_POS = conf.count("use_pos_tags");
-  if (conf.count("dropout"))
-    DROPOUT = conf["dropout"].as<float>();
-  LAYERS = conf["layers"].as<unsigned>();
-  INPUT_DIM = conf["input_dim"].as<unsigned>();
-  PRETRAINED_DIM = conf["pretrained_dim"].as<unsigned>();
-  BILSTM_INPUT_DIM = conf["bilstm_input_dim"].as<unsigned>();
-  BILSTM_HIDDEN_DIM = conf["bilstm_hidden_dim"].as<unsigned>();
-  STATE_HIDDEN_DIM = BILSTM_HIDDEN_DIM * 2;
-  ATTENTION_HIDDEN_DIM = conf["attention_hidden_dim"].as<unsigned>();
+  get_args(argc, argv, params);
 
-  ACTION_DIM = conf["action_dim"].as<unsigned>();
-  POS_DIM = conf["pos_dim"].as<unsigned>();
-  STATE_INPUT_DIM = ACTION_DIM + BILSTM_HIDDEN_DIM*2 + BILSTM_HIDDEN_DIM*2;
-  DEBUG = conf.count("debug");
-  if (conf.count("train") && conf.count("dev_data") == 0) {
-    cerr << "You specified --train but did not specify --dev_data FILE\n";
-    return 1;
+  params.state_input_dim = params.action_dim + params.bilstm_hidden_dim*4;
+  params.state_hidden_dim = params.bilstm_hidden_dim * 2;
+
+  cerr << "Unknown word strategy: ";
+  if (params.unk_strategy) {
+    cerr << "STOCHASTIC REPLACEMENT\n";
+  } else {
+    abort();
   }
-  if (conf.count("alpha")) {
-    ALPHA = conf["alpha"].as<float>();
-    if (ALPHA <= 0.f) { cerr << "--alpha must be between 0 and +infty\n"; abort(); }
-  }
-  if (conf.count("samples")) {
-    N_SAMPLES = conf["samples"].as<unsigned>();
-    if (N_SAMPLES == 0) { cerr << "Please specify N>0 samples\n"; abort(); }
-  }
-  
+  assert(params.unk_prob >= 0.); assert(params.unk_prob <= 1.);
   ostringstream os;
-  os << "ntparse"
-     << (USE_POS ? "_pos" : "")
-     << '_' << LAYERS
-     << '_' << INPUT_DIM
-     << '_' << ACTION_DIM
-     << '_' << POS_DIM
-     << '_' << REL_DIM
-     << '_' << BILSTM_INPUT_DIM
-     << '_' << BILSTM_HIDDEN_DIM
-     << '_' << ATTENTION_HIDDEN_DIM
-     << '_' << STATE_HIDDEN_DIM
+  os << "parser"
+     << '_' << params.layers
+     << '_' << params.input_dim
+     << '_' << params.action_dim
+     << '_' << params.pos_dim
+     << '_' << params.rel_dim
+     << '_' << params.bilstm_input_dim
+     << '_' << params.bilstm_hidden_dim
+     << '_' << params.attention_hidden_dim
      << "-pid" << getpid() << ".params";
   const string fname = os.str();
-  cerr << "PARAMETER FILE: " << fname << endl;
-  bool softlinkCreated = false;
+  cerr << "Writing parameters to file: " << fname << endl;
 
-  Model model;
-
+//=====================================================================================================
+  
   parser::TopDownOracle corpus(&termdict, &adict, &posdict, &ntermdict);
   parser::TopDownOracle dev_corpus(&termdict, &adict, &posdict, &ntermdict);
-  parser::TopDownOracle test_corpus(&termdict, &adict, &posdict, &ntermdict);
-  corpus.load_oracle(conf["training_data"].as<string>(), true);	
-  corpus.load_bdata(conf["bracketing_dev_data"].as<string>());
+  corpus.load_oracle(params.train_file, true);
+  dev_corpus.load_oracle(params.dev_file, true);	
+  corpus.load_bdata(params.bracketed_file);
 
-  if (conf.count("words"))
-    parser::ReadEmbeddings_word2vec(conf["words"].as<string>(), &termdict, &pretrained);
+  if (params.words_file != "") {
+    cerr << "Loading from " << params.words_file << " with" << params.pretrained_dim << " dimensions\n";
+    ifstream in(params.words_file.c_str());
+    string line;
+    getline(in, line);
+    vector<float> v(params.pretrained_dim, 0);
+    string word;
+    while (getline(in, line)) {
+      istringstream lin(line);
+      lin >> word;
+      for (unsigned i = 0; i < params.pretrained_dim; ++i) lin >> v[i];
+      unsigned id = termdict.convert(word);
+      pretrained[id] = v;
+    }
+  }
 
   // freeze dictionaries so we don't accidentaly load OOVs
   termdict.freeze();
   termdict.set_unk("UNK"); // we don't actually expect to use this often
-     // since the Oracles are required to be "pre-UNKified", but this prevents
-     // problems with UNKifying the lowercased data which needs to be loaded
   adict.freeze();
   ntermdict.freeze();
   posdict.freeze();
@@ -682,15 +607,6 @@ int main(int argc, char** argv) {
     singletons.resize(termdict.size(), false);
     for (auto wc : counts)
       if (wc.second == 1) singletons[wc.first] = true;
-  }
-
-  if (conf.count("dev_data")) {
-    cerr << "Loading validation set\n";
-    dev_corpus.load_oracle(conf["dev_data"].as<string>(), false);
-  }
-  if (conf.count("test_data")) {
-    cerr << "Loading test set\n";
-    test_corpus.load_oracle(conf["test_data"].as<string>(), false);
   }
 
   for (unsigned i = 0; i < adict.size(); ++i) {
@@ -706,26 +622,37 @@ int main(int argc, char** argv) {
   POS_SIZE = posdict.size();
   VOCAB_SIZE = termdict.size();
   ACTION_SIZE = adict.size();
-  possible_actions.resize(adict.size());
-  for (unsigned i = 0; i < adict.size(); ++i)
-    possible_actions[i] = i;
 
+//============================================================================================================
+
+  Model model;
   ParserBuilder parser(&model, pretrained);
-  if (conf.count("model")) {
-    ifstream in(conf["model"].as<string>().c_str());
-    boost::archive::text_iarchive ia(in);
-    ia >> model;
+  if (params.model_file != "") {
+    TextFileLoader loader(params.model_file);
+    loader.populate(model);
   }
 
   //TRAINING
-  if (conf.count("train")) {
+  if (params.train) {
     signal(SIGINT, signal_callback_handler);
-	SimpleSGDTrainer sgd(model);
 
-	//AdamTrainer sgd(&model);
-    //MomentumSGDTrainer sgd(&model);
-    //sgd.eta_decay = 0.08;
-    sgd.eta_decay = 0.05;
+    Trainer* sgd = NULL;
+    unsigned method = params.train_methods;
+    if(method == 0){
+        sgd = new SimpleSGDTrainer(model,0.1, 0.1);
+	sgd->eta_decay = 0.05;
+    }
+    else if(method == 1)
+        sgd = new MomentumSGDTrainer(model,0.01, 0.9, 0.1);
+    else if(method == 2){
+        sgd = new AdagradTrainer(model);
+        sgd->clipping_enabled = false;
+    }
+    else if(method == 3){
+        sgd = new AdamTrainer(model);
+        sgd->clipping_enabled = false;
+    }
+
     vector<unsigned> order(corpus.sents.size());
     for (unsigned i = 0; i < corpus.sents.size(); ++i)
       order[i] = i;
@@ -748,90 +675,81 @@ int main(int argc, char** argv) {
       for (unsigned sii = 0; sii < status_every_i_iterations; ++sii) {
            if (si == corpus.sents.size()) {
              si = 0;
-             if (first) { first = false; } else { sgd.update_epoch(); }
+             if (first) { first = false; } else { sgd->update_epoch(); }
              cerr << "**SHUFFLE\n";
              random_shuffle(order.begin(), order.end());
            }
            tot_seen += 1;
            auto& sentence = corpus.sents[order[si]];
 	   const vector<int>& actions=corpus.actions[order[si]];
+	   
            ComputationGraph hg;
 	   vector<unsigned> results;
-           Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,false,&results);
+           Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,&results,true,false);
+
            double lp = as_scalar(hg.incremental_forward(nll));
            if (lp < 0) {
              cerr << "Log prob < 0 on sentence " << order[si] << ": lp=" << lp << endl;
              assert(lp >= 0.0);
            }
            hg.backward(nll);
-           sgd.update(1.0);
+           sgd->update(1.0);
            llh += lp;
            ++si;
            trs += actions.size();
            words += sentence.size();
       }
-      sgd.status();
+      sgd->status();
+
       auto time_now = chrono::system_clock::now();
       auto dur = chrono::duration_cast<chrono::milliseconds>(time_now - time_start);
-      cerr << "update #" << iter << " (epoch " << (tot_seen / corpus.sents.size()) <<
-         /*" |time=" << put_time(localtime(&time_now), "%c %Z") << ")\tllh: "<< */
-        ") per-action-ppl: " << exp(llh / trs) << " per-input-ppl: " << exp(llh / words) << " per-sent-ppl: " << exp(llh / status_every_i_iterations) << " err: " << (trs - right) / trs << " [" << dur.count() / (double)status_every_i_iterations << "ms per instance]" << endl;
-      llh = trs = right = words = 0;
+      cerr << "update #" << iter << " (epoch " << (tot_seen / corpus.sents.size()) <<")"
+	   << " per-action-ppl: " << exp(llh / trs) 
+	   << " per-input-ppl: " << exp(llh / words) 
+	   << " per-sent-ppl: " << exp(llh / status_every_i_iterations) 
+           << " err: " << (trs - right) / trs
+	   << " [" << dur.count() / (double)status_every_i_iterations << "ms per instance]" << endl;
 
+      llh = trs = right = words = 0;
       static int logc = 0;
       ++logc;
+
       if (logc % 25 == 1) { // report on dev set
         unsigned dev_size = dev_corpus.size();
         double llh = 0;
         double trs = 0;
         double right = 0;
         double dwords = 0;
-        ostringstream os;
-        os << "/tmp/parser_dev_eval." << getpid() << ".txt";
-        const string pfx = os.str();
-        ofstream out(pfx.c_str());
+        ofstream out("dev.out");
         auto t_start = chrono::high_resolution_clock::now();
         for (unsigned sii = 0; sii < dev_size; ++sii) {
            const auto& sentence=dev_corpus.sents[sii];
 	   const vector<int>& actions=dev_corpus.actions[sii];
-           dwords += sentence.size();
-           {  ComputationGraph hg;
-              Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,true,NULL);
-              double lp = as_scalar(hg.incremental_forward(nll));
-              llh += lp;
-           }
-           ComputationGraph hg;
+           
+	   ComputationGraph hg;
 	   vector<unsigned> pred;
-           parser.log_prob_parser(&hg,sentence,vector<int>(),&right, true,&pred);
-           int ti = 0;
+           Expression nll = parser.log_prob_parser(&hg, sentence, actions, &right, &pred, false, false);
+           double lp = as_scalar(hg.incremental_forward(nll));
+           llh += lp;
+
+	   int ti = 0;
            for (auto a : pred) {
              if (adict.convert(a)[0] == 'N') {
                out << '(' << ntermdict.convert(action2NTindex.find(a)->second) << ' ';
              } else if (adict.convert(a)[0] == 'S') {
-                 if (true) {
-                   string preterminal = "XX";
-                   out << '(' << preterminal << ' ' << termdict.convert(sentence.raw[ti++]) << ") ";
-                 } else { // use this branch to surpress preterminals
-                   out << termdict.convert(sentence.raw[ti++]) << ' ';
-                 }
+               out << '(' << posdict.convert(sentence.pos[ti]) << ' ' << termdict.convert(sentence.raw[ti++]) << ") ";
              } else out << ") ";
            }
            out << endl;
-           double lp = 0;
            trs += actions.size();
+	   dwords += sentence.size();
         }
         auto t_end = chrono::high_resolution_clock::now();
         out.close();
         double err = (trs - right) / trs;
-        cerr << "Dev output in " << pfx << endl;
-        //parser::EvalBResults res = parser::Evaluate("foo", pfx);
-	std::string command="python remove_dev_unk.py "+ corpus.devdata +" "+pfx+" > evaluable.txt";
-	const char* cmd=command.c_str();
-	system(cmd);
 
-        std::string command2="EVALB/evalb -p EVALB/COLLINS.prm "+corpus.devdata+" evaluable.txt>evalbout.txt";
+        std::string command2="EVALB/evalb -p EVALB/COLLINS.prm "+corpus.devdata+" dev.out > evalbout.txt";
         const char* cmd2=command2.c_str();
-
         system(cmd2);
         
         std::ifstream evalfile("evalbout.txt");
@@ -851,135 +769,115 @@ int main(int argc, char** argv) {
 		}
         }
         
- 
-        
-        cerr << "  **dev (iter=" << iter << " epoch=" << (tot_seen / corpus.size()) << ")\tllh=" << llh << " ppl: " << exp(llh / dwords) << " f1: " << newfmeasure << " err: " << err << "\t[" << dev_size << " sents in " << chrono::duration<double, milli>(t_end-t_start).count() << " ms]" << endl;
-//        if (err < best_dev_err && (tot_seen / corpus.size()) > 1.0) {
+        cerr << "  **dev (iter=" << iter << " epoch=" << (tot_seen / corpus.size()) << ")\t"
+		<<" llh= " << llh
+		<<" ppl: " << exp(llh / dwords)
+		<<" f1: " << newfmeasure
+		<<" err: " << err
+		<<"\t[" << dev_size << " sents in " << chrono::duration<double, milli>(t_end-t_start).count() << " ms]" << endl;
        if (newfmeasure>bestf1) {
           cerr << "  new best...writing model to " << fname << " ...\n";
           best_dev_err = err;
 	  bestf1=newfmeasure;
-          ofstream out(fname);
-          boost::archive::text_oarchive oa(out);
-          oa << model;
-          system((string("cp ") + pfx + string(" ") + pfx + string(".best")).c_str());
-          // Create a soft link to the most recent model in order to make it
-          // easier to refer to it in a shell script.
-          if (!softlinkCreated) {
-            string softlink = " latest_model";
-            if (system((string("rm -f ") + softlink).c_str()) == 0 && 
-                system((string("ln -s ") + fname + softlink).c_str()) == 0) {
-              cerr << "Created " << softlink << " as a soft link to " << fname 
-                   << " for convenience." << endl;
-            }
-            softlinkCreated = true;
-          }
+
+	  ostringstream part_os;
+          part_os << "parser"
+                << '_' << params.layers
+                << '_' << params.input_dim
+                << '_' << params.action_dim
+                << '_' << params.pos_dim
+                << '_' << params.rel_dim
+                << '_' << params.bilstm_input_dim
+                << '_' << params.bilstm_hidden_dim
+                << '_' << params.attention_hidden_dim
+                << "-pid" << getpid()
+                << "-part" << (tot_seen/corpus.size()) << ".params";
+          const string part = part_os.str();
+
+	  TextFileSaver saver("model/"+part);
+          saver.save(model);
         }
       }
     }
   } // should do training?
-  if (test_corpus.size() > 0) { // do test evaluation
-        bool sample = conf.count("samples") > 0;
-        unsigned test_size = test_corpus.size();
+  else{ // do test evaluation
+	ofstream out("test.out");
+        unsigned test_size = dev_corpus.size();
         double llh = 0;
         double trs = 0;
         double right = 0;
         double dwords = 0;
-        auto t_start = chrono::high_resolution_clock::now();
-	const vector<int> actions;
-        for (unsigned sii = 0; sii < test_size; ++sii) {
-           const auto& sentence=test_corpus.sents[sii];
-           dwords += sentence.size();
-           for (unsigned z = 0; z < N_SAMPLES; ++z) {
-             ComputationGraph hg;
-             vector<unsigned> pred;
-	     Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,sample,&pred,true);
-             double lp = as_scalar(hg.incremental_forward(nll));
-             cout << sii << " ||| " << -lp << " |||";
-             int ti = 0;
-             for (auto a : pred) {
-               if (adict.convert(a)[0] == 'N') {
-                 cout << " (" << ntermdict.convert(action2NTindex.find(a)->second);
-               } else if (adict.convert(a)[0] == 'S') {
-                   if (!sample) {
-		     cout << ' ' << termdict.convert(sentence.raw[ti++]);
-                     //string preterminal = "XX";
-                     //cout << " (" << preterminal << ' ' << termdict.convert(sentence.raw[ti++]) << ")";
-                   } else { // use this branch to surpress preterminals
-                     //cout << ' ' << termdict.convert(sentence.raw[ti++]);
-		     //cout<< " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti++]) << ")";
-                     cout << " (" << "XX" << " " << termdict.convert(sentence.raw[ti++]) << ")";
-		   }
-               } else cout << ')';
-             }
-             cout << endl;
-           }
-       }
-       ostringstream os;
-        os << "/tmp/parser_test_eval." << getpid() << ".txt";
-        const string pfx = os.str();
-        ofstream out(pfx.c_str());
-        t_start = chrono::high_resolution_clock::now();
-        for (unsigned sii = 0; sii < test_size; ++sii) {
-           const auto& sentence=test_corpus.sents[sii];
-           const vector<int>& actions=test_corpus.actions[sii];
-           dwords += sentence.size();
-           {  ComputationGraph hg;
-              Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,true,NULL);
-              double lp = as_scalar(hg.incremental_forward(nll));
-              llh += lp;
-           }
-           ComputationGraph hg;
-           vector<unsigned> pred;
-	   parser.log_prob_parser(&hg,sentence,vector<int>(),&right,true,&pred);
-           int ti = 0;
-           for (auto a : pred) {
-             if (adict.convert(a)[0] == 'N') {
-               out << '(' << ntermdict.convert(action2NTindex.find(a)->second) << ' ';
-             } else if (adict.convert(a)[0] == 'S') {
-                 if (true) {
-                   string preterminal = "XX";
-                   out << '(' << preterminal << ' ' << termdict.convert(sentence.raw[ti++]) << ") ";
-                 } else { // use this branch to surpress preterminals
-                   out << termdict.convert(sentence.raw[ti++]) << ' ';
-                 }
-             } else out << ") ";
-           }
-           out << endl;
-           double lp = 0;
-           trs += actions.size();
-        }
-        auto t_end = chrono::high_resolution_clock::now();
-        out.close();
-        double err = (trs - right) / trs;
-        cerr << "Test output in " << pfx << endl;
-        //parser::EvalBResults res = parser::Evaluate("foo", pfx);
-        std::string command="python remove_dev_unk.py "+ corpus.devdata +" "+pfx+" > evaluable.txt";
-        const char* cmd=command.c_str();
-        system(cmd);
+	if(params.samples !=0){
+        	auto t_start = chrono::high_resolution_clock::now();
+		const vector<int> actions;
+        	for (unsigned sii = 0; sii < test_size; ++sii) {
+           		const auto& sentence=dev_corpus.sents[sii];
+			const vector<int>& actions=dev_corpus.actions[sii];
+           		for (unsigned z = 0; z < params.samples; ++z) {
+             			ComputationGraph hg;
+             			vector<unsigned> pred;
+	     			parser.log_prob_parser(&hg,sentence,actions,&right,&pred,false,true);
+             			int ti = 0;
+             			for (auto a : pred) {
+               				if (adict.convert(a)[0] == 'N') {
+                 				out << " (" << ntermdict.convert(action2NTindex.find(a)->second);
+               				} else if (adict.convert(a)[0] == 'S') {
+                     				out << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti++]) << ")";
+               				} else out << ')';
+             			}
+             			out << endl;
+           		}
+       		}
+	}
+	else{
+        	auto t_start = chrono::high_resolution_clock::now();
+        	for (unsigned sii = 0; sii < test_size; ++sii) {
+           		const auto& sentence=dev_corpus.sents[sii];
+           		const vector<int>& actions=dev_corpus.actions[sii];
+           		dwords += sentence.size();
+           		ComputationGraph hg;
+           		vector<unsigned> pred;
+	   		Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,&pred,false,false);
+	   		double lp = as_scalar(hg.incremental_forward(nll));
+           		llh += lp;
 
-        std::string command2="EVALB/evalb -p EVALB/COLLINS.prm "+corpus.devdata+" evaluable.txt>evalbout.txt";
-        const char* cmd2=command2.c_str();
+           		int ti = 0;
+           		for (auto a : pred) {
+             			if (adict.convert(a)[0] == 'N') {
+               				out << '(' << ntermdict.convert(action2NTindex.find(a)->second) << ' ';
+             			} else if (adict.convert(a)[0] == 'S') {
+					out << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti++]) << ")";
+             			} else out << ") ";
+           		}
+           		out << endl;
+           		trs += actions.size();
+        	}
+        	auto t_end = chrono::high_resolution_clock::now();
+        	out.close();
+        	double err = (trs - right) / trs;
 
-        system(cmd2);
+        	std::string command2="EVALB/evalb -p EVALB/COLLINS.prm "+corpus.devdata+" test.out > evalbout.txt";
+        	const char* cmd2=command2.c_str();
+		system(cmd2);
 
-        std::ifstream evalfile("evalbout.txt");
-        std::string lineS;
-        std::string brackstr="Bracketing FMeasure";
-        double newfmeasure=0.0;
-        std::string strfmeasure="";
-        bool found=0;
-        while (getline(evalfile, lineS) && !newfmeasure){
-                if (lineS.compare(0, brackstr.length(), brackstr) == 0) {
+        	std::ifstream evalfile("evalbout.txt");
+        	std::string lineS;
+        	std::string brackstr="Bracketing FMeasure";
+        	double newfmeasure=0.0;
+        	std::string strfmeasure="";
+        	bool found=0;
+        	while (getline(evalfile, lineS) && !newfmeasure){
+                	if (lineS.compare(0, brackstr.length(), brackstr) == 0) {
                         //std::cout<<lineS<<"\n";
                         strfmeasure=lineS.substr(lineS.size()-5, lineS.size());
                         std::string::size_type sz;
                         newfmeasure = std::stod (strfmeasure,&sz);
                         //std::cout<<strfmeasure<<"\n";
-                }
-        }
+                	}
+        	}
 
-       cerr<<"F1score: "<<newfmeasure<<"\n";
+       		cerr<<"F1score: "<<newfmeasure<<"\n";
+      }
     
   }
 }

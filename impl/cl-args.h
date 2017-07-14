@@ -48,6 +48,11 @@ struct Params {
   bool train = false;
   double unk_prob = 0.2;
   double pdrop = 0.3;
+
+//constituent parser
+  double alpha = 0.8;
+  unsigned samples = 0;
+  string bracketed_file = "";
 };
 
 /**
@@ -232,6 +237,30 @@ void get_args(int argc,
       }
       istringstream d(argv[i + 1]);
       d >> params.pdrop;
+      i++;
+    } else  if (arg == "--alpha") {
+      if (i + 1 == argc) {
+        std::cerr << "No matching argument for " << arg << std::endl;
+        abort();
+      }
+      istringstream d(argv[i + 1]);
+      d >> params.alpha;
+      i++;
+    } else  if (arg == "--samples") {
+      if (i + 1 == argc) {
+        std::cerr << "No matching argument for " << arg << std::endl;
+        abort();
+      }
+      istringstream d(argv[i + 1]);
+      d >> params.samples;
+      i++;
+    } else  if (arg == "--bracketed_file") {
+      if (i + 1 == argc) {
+        std::cerr << "No matching argument for " << arg << std::endl;
+        abort();
+      }
+      istringstream d(argv[i + 1]);
+      d >> params.bracketed_file;
       i++;
     }
     i++;
