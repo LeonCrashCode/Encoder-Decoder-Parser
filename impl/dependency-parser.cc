@@ -15,89 +15,31 @@
 #include <unistd.h>
 #include <signal.h>
 
-#include <boost/archive/text_oarchive.hpp>
-#include <boost/archive/text_iarchive.hpp>
-#include <boost/program_options.hpp>
-
 #include "dynet/training.h"
 #include "dynet/dynet.h"
 #include "dynet/expr.h"
 #include "dynet/nodes.h"
 #include "dynet/lstm.h"
 #include "dynet/rnn.h"
+#include "dynet/io.h"
 #include "c2.h"
+#include "cl-args.h"
 
-float pdrop = 0.3;
-bool DEBUG = false;
 cpyp::Corpus corpus;
 volatile bool requested_stop = false;
-unsigned LAYERS = 1;
-unsigned INPUT_DIM = 40;
-unsigned PRETRAINED_DIM = 50;
-unsigned ACTION_DIM = 36;
-unsigned POS_DIM = 10;
-unsigned REL_DIM = 8;
-
-unsigned BILSTM_INPUT_DIM = 64;
-unsigned BILSTM_HIDDEN_DIM = 64;
-unsigned ATTENTION_HIDDEN_DIM = 64;
-
-unsigned STATE_INPUT_DIM = ACTION_DIM + ATTENTION_HIDDEN_DIM;
-unsigned STATE_HIDDEN_DIM = 64; 
-bool USE_POS = false;
-
 constexpr const char* ROOT_SYMBOL = "ROOT";
 unsigned kROOT_SYMBOL = 0;
 unsigned ACTION_SIZE = 0;
 unsigned VOCAB_SIZE = 0;
 unsigned POS_SIZE = 0;
 
-using namespace dynet::expr;
 using namespace dynet;
 using namespace std;
-namespace po = boost::program_options;
+
+Params params;
 
 vector<unsigned> possible_actions;
 unordered_map<unsigned, vector<float>> pretrained;
-
-void InitCommandLine(int argc, char** argv, po::variables_map* conf) {
-  po::options_description opts("Configuration options");
-  opts.add_options()
-        ("training_data,T", po::value<string>(), "List of Transitions - Training corpus")
-        ("dev_data,d", po::value<string>(), "Development corpus")
-        ("test_data,p", po::value<string>(), "Test corpus")
-        ("unk_strategy,o", po::value<unsigned>()->default_value(1), "Unknown word strategy: 1 = singletons become UNK with probability unk_prob")
-        ("unk_prob,u", po::value<double>()->default_value(0.2), "Probably with which to replace singletons with UNK in training data")
-        ("model,m", po::value<string>(), "Load saved model from this file")
-        ("use_pos_tags,P", "make POS tags visible to parser")
-        ("layers", po::value<unsigned>()->default_value(1), "number of LSTM layers")
-        ("action_dim", po::value<unsigned>()->default_value(16), "action embedding size")
-        ("input_dim", po::value<unsigned>()->default_value(32), "input embedding size")
-        ("pretrained_dim", po::value<unsigned>()->default_value(50), "pretrained input dimension")
-        ("pos_dim", po::value<unsigned>()->default_value(12), "POS dimension")
-        ("rel_dim", po::value<unsigned>()->default_value(10), "relation dimension")
-        ("bilstm_input_dim", po::value<unsigned>()->default_value(64), "bilstm input dimension")
-        ("bilstm_hidden_dim", po::value<unsigned>()->default_value(64), "bilstm hidden dimension")
-	("attention_hidden_dim", po::value<unsigned>()->default_value(64), "attention hidden dimension")
-	("state_hidden_dim", po::value<unsigned>()->default_value(64), "state hidden dimension")
-	("pdrop", po::value<float>()->default_value(0.3), "pdrop")
-	("train_methods", po::value<unsigned>()->default_value(0), "0 for simple, 1 for mon, 2 for adagrad, 3 for adam")
-	("debug", "debug")
-	("train,t", "Should training be run?")
-        ("words,w", po::value<string>(), "Pretrained word embeddings")
-        ("help,h", "Help");
-  po::options_description dcmdline_options;
-  dcmdline_options.add(opts);
-  po::store(parse_command_line(argc, argv, dcmdline_options), *conf);
-  if (conf->count("help")) {
-    cerr << dcmdline_options << endl;
-    exit(1);
-  }
-  if (conf->count("training_data") == 0) {
-    cerr << "Please specify --traing_data (-T): this is required to determine the vocabulary mapping, even if the parser is used in prediction mode.\n";
-    exit(1);
-  }
-}
 
 struct ParserBuilder {
 
@@ -134,39 +76,39 @@ struct ParserBuilder {
   Parameter p_combo2rt;
   Parameter p_rtbias;
   explicit ParserBuilder(Model* model, const unordered_map<unsigned, vector<float>>& pretrained) :
-      state_lstm(1, STATE_INPUT_DIM ,STATE_HIDDEN_DIM, *model),
-      l2rbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
-      r2lbuilder(LAYERS, BILSTM_INPUT_DIM, BILSTM_HIDDEN_DIM, *model),
-      p_w(model->add_lookup_parameters(VOCAB_SIZE, {INPUT_DIM})),
-      p_a(model->add_lookup_parameters(ACTION_SIZE, {ACTION_DIM})),
-      p_r(model->add_lookup_parameters(ACTION_SIZE, {REL_DIM})),
-      p_w2l(model->add_parameters({BILSTM_INPUT_DIM, INPUT_DIM})),
-      p_lb(model->add_parameters({BILSTM_INPUT_DIM})),
-      p_sent_start(model->add_parameters({BILSTM_INPUT_DIM})),
-      p_sent_end(model->add_parameters({BILSTM_INPUT_DIM})),
-      p_s_input2att(model->add_parameters({ATTENTION_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_s_h2att(model->add_parameters({ATTENTION_HIDDEN_DIM, STATE_HIDDEN_DIM})),
-      p_s_attbias(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_s_att2attexp(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_s_att2combo(model->add_parameters({STATE_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_b_input2att(model->add_parameters({ATTENTION_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_b_h2att(model->add_parameters({ATTENTION_HIDDEN_DIM, STATE_HIDDEN_DIM})),
-      p_b_attbias(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_b_att2attexp(model->add_parameters({ATTENTION_HIDDEN_DIM})),
-      p_b_att2combo(model->add_parameters({STATE_HIDDEN_DIM, BILSTM_HIDDEN_DIM*2})),
-      p_h2combo(model->add_parameters({STATE_HIDDEN_DIM, STATE_HIDDEN_DIM})),
-      p_combobias(model->add_parameters({STATE_HIDDEN_DIM})),
-      p_combo2rt(model->add_parameters({ACTION_SIZE, STATE_HIDDEN_DIM})),
+      state_lstm(1, params.state_input_dim ,params.state_hidden_dim, *model),
+      l2rbuilder(params.layers, params.bilstm_input_dim, params.bilstm_hidden_dim, *model),
+      r2lbuilder(params.layers, params.bilstm_input_dim, params.bilstm_hidden_dim, *model),
+      p_w(model->add_lookup_parameters(VOCAB_SIZE, {params.input_dim})),
+      p_a(model->add_lookup_parameters(ACTION_SIZE, {params.action_dim})),
+      p_r(model->add_lookup_parameters(ACTION_SIZE, {params.rel_dim})),
+      p_w2l(model->add_parameters({params.bilstm_input_dim, params.input_dim})),
+      p_lb(model->add_parameters({params.bilstm_input_dim})),
+      p_sent_start(model->add_parameters({params.bilstm_input_dim})),
+      p_sent_end(model->add_parameters({params.bilstm_input_dim})),
+      p_s_input2att(model->add_parameters({params.attention_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_s_h2att(model->add_parameters({params.attention_hidden_dim, params.state_hidden_dim})),
+      p_s_attbias(model->add_parameters({params.attention_hidden_dim})),
+      p_s_att2attexp(model->add_parameters({params.attention_hidden_dim})),
+      p_s_att2combo(model->add_parameters({params.state_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_b_input2att(model->add_parameters({params.attention_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_b_h2att(model->add_parameters({params.attention_hidden_dim, params.state_hidden_dim})),
+      p_b_attbias(model->add_parameters({params.attention_hidden_dim})),
+      p_b_att2attexp(model->add_parameters({params.attention_hidden_dim})),
+      p_b_att2combo(model->add_parameters({params.state_hidden_dim, params.bilstm_hidden_dim*2})),
+      p_h2combo(model->add_parameters({params.state_hidden_dim, params.state_hidden_dim})),
+      p_combobias(model->add_parameters({params.state_hidden_dim})),
+      p_combo2rt(model->add_parameters({ACTION_SIZE, params.state_hidden_dim})),
       p_rtbias(model->add_parameters({ACTION_SIZE})){
-    if (USE_POS) {
-      p_p = model->add_lookup_parameters(POS_SIZE, {POS_DIM});
-      p_p2l = model->add_parameters({BILSTM_INPUT_DIM, POS_DIM});
+    if (params.use_pos) {
+      p_p = model->add_lookup_parameters(POS_SIZE, {params.pos_dim});
+      p_p2l = model->add_parameters({params.bilstm_input_dim, params.pos_dim});
     }
     if (pretrained.size() > 0) {
-      p_t = model->add_lookup_parameters(VOCAB_SIZE, {PRETRAINED_DIM});
+      p_t = model->add_lookup_parameters(VOCAB_SIZE, {params.pretrained_dim});
       for (auto it : pretrained)
         p_t.initialize(it.first, it.second);
-      p_t2l = model->add_parameters({BILSTM_INPUT_DIM, PRETRAINED_DIM});
+      p_t2l = model->add_parameters({params.bilstm_input_dim, params.pretrained_dim});
     }
   }
 
@@ -262,14 +204,14 @@ Expression log_prob_parser(ComputationGraph* hg,
     Expression lb = parameter(*hg, p_lb);
     Expression w2l = parameter(*hg, p_w2l);
     Expression p2l;
-    if (USE_POS)
+    if (params.use_pos)
       p2l = parameter(*hg, p_p2l);
     Expression t2l;
     if (pretrained.size()>0)
       t2l = parameter(*hg, p_t2l); 
     state_lstm.new_graph(*hg);
     state_lstm.start_new_sequence();
-    //state_lstm.start_new_sequence({zeroes(*hg, {STATE_HIDDEN_DIM}), state_start});
+    //state_lstm.start_new_sequence({zeroes(*hg, {params.state_hidden_dim}), state_start});
     
     Expression sent_start = parameter(*hg, p_sent_start);
     Expression sent_end = parameter(*hg, p_sent_end);
@@ -295,27 +237,23 @@ Expression log_prob_parser(ComputationGraph* hg,
     for (unsigned i = 0; i < sent.size(); ++i) {
       assert(sent[i] < VOCAB_SIZE);
       Expression w =lookup(*hg, p_w, sent[i]);
-      if(train) w = dropout(w,pdrop);
+      if(train) w = dropout(w,params.pdrop);
       vector<Expression> args = {lb, w2l, w}; // learn embeddings
-      if (USE_POS) { // learn POS tag?
+      if (params.use_pos) { // learn POS tag?
         Expression p = lookup(*hg, p_p, sentPos[i]);
-        if(train) p = dropout(p,pdrop);
+        if(train) p = dropout(p,params.pdrop);
         args.push_back(p2l);
         args.push_back(p);
       }
       if (pretrained.size() > 0 &&  pretrained.count(raw_sent[i])) {  // include fixed pretrained vectors?
         Expression t = const_lookup(*hg, p_t, raw_sent[i]);
-        if(train) t = dropout(t,pdrop);
+        if(train) t = dropout(t,params.pdrop);
         args.push_back(t2l);
         args.push_back(t);
       }
-      else{
-        args.push_back(t2l);
-        args.push_back(zeroes(*hg,{PRETRAINED_DIM}));
-      }
       input_expr.push_back(rectify(affine_transform(args)));
     }
-if(DEBUG)	std::cerr<<"lookup table ok\n";
+if(params.debug)	std::cerr<<"lookup table ok\n";
     vector<Expression> l2r(sent.size());
     vector<Expression> r2l(sent.size());
     Expression l2r_s = l2rbuilder.add_input(sent_start);
@@ -332,7 +270,7 @@ if(DEBUG)	std::cerr<<"lookup table ok\n";
     }
     Expression sent_start_expr = concatenate({l2r_s, r2l_s});
     Expression sent_end_expr = concatenate({l2r_e, r2l_e});
-if(DEBUG)	std::cerr<<"bilstm ok\n";
+if(params.debug)	std::cerr<<"bilstm ok\n";
     // dummy symbol to represent the empty buffer
     vector<int> bufferi(sent.size() + 1);
     bufferi[0] = -999;
@@ -348,17 +286,17 @@ if(DEBUG)	std::cerr<<"bilstm ok\n";
     vector<Expression> r2lhc = r2lbuilder.final_s();
 
     vector<Expression> initc;
-    //for(unsigned i = 0; i < LAYERS; i ++){
+    //for(unsigned i = 0; i < params.layers; i ++){
       initc.push_back(concatenate({l2rhc.back(),r2lhc.back()}));
     //}
 
-    //for(unsigned i = 0; i < LAYERS; i ++){
-      initc.push_back(zeroes(*hg, {BILSTM_HIDDEN_DIM*2}));
+    //for(unsigned i = 0; i < params.layers; i ++){
+      initc.push_back(zeroes(*hg, {params.bilstm_hidden_dim*2}));
     //}
     state_lstm.start_new_sequence(initc);
 
     while(stacki.size() > 2 || bufferi.size() > 1) {
-if(DEBUG)	std::cerr<<"action index " << action_count<<"\n";
+if(params.debug)	std::cerr<<"action index " << action_count<<"\n";
      // get list of possible actions for the current parser state
       vector<unsigned> current_valid_actions;
       for (auto a: possible_actions) {
@@ -366,7 +304,7 @@ if(DEBUG)	std::cerr<<"action index " << action_count<<"\n";
           continue;
         current_valid_actions.push_back(a);
       }
-if(DEBUG)	std::cerr<<"possible action " << current_valid_actions.size()<<"\n";
+if(params.debug)	std::cerr<<"possible action " << current_valid_actions.size()<<"\n";
       //stack attention
       Expression prev_h = state_lstm.final_h()[0];
       vector<Expression> s_att;
@@ -380,7 +318,7 @@ if(DEBUG)	std::cerr<<"possible action " << current_valid_actions.size()<<"\n";
       Expression s_att_col = transpose(concatenate_cols(s_att));
       Expression s_attexp = softmax(s_att_col * s_att2attexp);
 
-if(DEBUG){
+if(params.debug){
 	vector<float> s_see = as_vector(hg->incremental_forward(s_attexp));
 	for(unsigned i = 0; i < s_see.size(); i ++){
 		cerr<<s_see[i]<<" ";
@@ -401,7 +339,7 @@ if(DEBUG){
       Expression b_att_col = transpose(concatenate_cols(b_att));
       Expression b_attexp = softmax(b_att_col * b_att2attexp);
 
-if(DEBUG){
+if(params.debug){
         vector<float> b_see = as_vector(hg->incremental_forward(b_attexp));
         for(unsigned i = 0; i < b_see.size(); i ++){
                 cerr<<b_see[i]<<" ";
@@ -413,11 +351,11 @@ if(DEBUG){
       Expression b_att_pool = b_input_col * b_attexp;
 
       //
-if(DEBUG)	std::cerr<<"attention ok\n";
+if(params.debug)	std::cerr<<"attention ok\n";
       Expression combo = affine_transform({combobias, h2combo, prev_h, s_att2combo, s_att_pool, b_att2combo, b_att_pool});
       Expression n_combo = rectify(combo);
       Expression rt = affine_transform({rtbias, combo2rt, n_combo});
-if(DEBUG)	std::cerr<<"to action layer ok\n";
+if(params.debug)	std::cerr<<"to action layer ok\n";
       Expression adiste = log_softmax(rt, current_valid_actions);
       vector<float> adist = as_vector(hg->incremental_forward(adiste));
       double best_score = adist[current_valid_actions[0]];
@@ -428,7 +366,7 @@ if(DEBUG)	std::cerr<<"to action layer ok\n";
           best_a = current_valid_actions[i];
         }
       }
-if(DEBUG)	std::cerr<<"best action "<<best_a<<" " << setOfActions[best_a]<<"\n";
+if(params.debug)	std::cerr<<"best action "<<best_a<<" " << setOfActions[best_a]<<"\n";
       unsigned action = best_a;
       if (build_training_graph) {  // if we have reference actions (for training) use the reference action
         action = correct_actions[action_count];
@@ -446,7 +384,7 @@ if(DEBUG)	std::cerr<<"best action "<<best_a<<" " << setOfActions[best_a]<<"\n";
       const char ac = actionString[0];
       const char ac2 = actionString[1];
 
-if(DEBUG)	std::cerr<<"action lookup ok\n";
+if(params.debug)	std::cerr<<"action lookup ok\n";
       if (ac =='S' && ac2=='H') {  // SHIFT
         stacki.push_back(bufferi.back());
         bufferi.pop_back();
@@ -471,7 +409,7 @@ if(DEBUG)	std::cerr<<"action lookup ok\n";
         // composed = cbias + H * head + D * dep + R * relation
         stacki.push_back(headi);
       }
-if(DEBUG)	std::cerr<<"state transit ok\n";
+if(params.debug)	std::cerr<<"state transit ok\n";
     }
     assert(stacki.size() == 2);
     assert(bufferi.size() == 1);
@@ -551,68 +489,51 @@ int main(int argc, char** argv) {
   cerr << endl;
   unsigned status_every_i_iterations = 100;
 
-  po::variables_map conf;
-  InitCommandLine(argc, argv, &conf);
-  USE_POS = conf.count("use_pos_tags");
-
-  LAYERS = conf["layers"].as<unsigned>();
-  INPUT_DIM = conf["input_dim"].as<unsigned>();
-  PRETRAINED_DIM = conf["pretrained_dim"].as<unsigned>();
-  ACTION_DIM = conf["action_dim"].as<unsigned>();
-  POS_DIM = conf["pos_dim"].as<unsigned>();
-  REL_DIM = conf["rel_dim"].as<unsigned>();
-
-  BILSTM_INPUT_DIM = conf["bilstm_input_dim"].as<unsigned>();
-  BILSTM_HIDDEN_DIM = conf["bilstm_hidden_dim"].as<unsigned>();
-  ATTENTION_HIDDEN_DIM = conf["attention_hidden_dim"].as<unsigned>();
-  STATE_INPUT_DIM = ACTION_DIM + BILSTM_HIDDEN_DIM*2 + BILSTM_HIDDEN_DIM*2;
-  STATE_HIDDEN_DIM = conf["state_hidden_dim"].as<unsigned>();
- 
-  STATE_HIDDEN_DIM = BILSTM_HIDDEN_DIM * 2;
-  pdrop = conf["pdrop"].as<float>();
-  DEBUG = conf.count("debug");
-
-  const unsigned unk_strategy = conf["unk_strategy"].as<unsigned>();
+  get_args(argc, argv, params);
+  
+  params.state_input_dim = params.action_dim + params.bilstm_hidden_dim*4;
+  params.state_hidden_dim = params.bilstm_hidden_dim * 2;
+  
+  cerr <<params.state_input_dim << " " << params.state_hidden_dim<<"\n";
   cerr << "Unknown word strategy: ";
-  if (unk_strategy == 1) {
+  if (params.unk_strategy) {
     cerr << "STOCHASTIC REPLACEMENT\n";
   } else {
     abort();
   }
-  const double unk_prob = conf["unk_prob"].as<double>();
-  assert(unk_prob >= 0.); assert(unk_prob <= 1.);
+  assert(params.unk_prob >= 0.); assert(params.unk_prob <= 1.);
   ostringstream os;
-  os << "parser_" << (USE_POS ? "pos" : "nopos")
-     << '_' << LAYERS
-     << '_' << INPUT_DIM
-     << '_' << ACTION_DIM
-     << '_' << POS_DIM
-     << '_' << REL_DIM
-     << '_' << BILSTM_INPUT_DIM
-     << '_' << BILSTM_HIDDEN_DIM
-     << '_' << ATTENTION_HIDDEN_DIM
-     << '_' << STATE_HIDDEN_DIM
+  os << "parser"
+     << '_' << params.layers
+     << '_' << params.input_dim
+     << '_' << params.action_dim 
+     << '_' << params.pos_dim
+     << '_' << params.rel_dim
+     << '_' << params.bilstm_input_dim
+     << '_' << params.bilstm_hidden_dim
+     << '_' << params.attention_hidden_dim
      << "-pid" << getpid() << ".params";
+
   int best_correct_heads = 0;
   const string fname = os.str();
   cerr << "Writing parameters to file: " << fname << endl;
-  bool softlinkCreated = false;
-  corpus.load_correct_actions(conf["training_data"].as<string>());	
+
+  corpus.load_correct_actions(params.train_file);	
   const unsigned kUNK = corpus.get_or_add_word(cpyp::Corpus::UNK);
   kROOT_SYMBOL = corpus.get_or_add_word(ROOT_SYMBOL);
 
-  if (conf.count("words")) {
-    pretrained[kUNK] = vector<float>(PRETRAINED_DIM, 0);
-    cerr << "Loading from " << conf["words"].as<string>() << " with" << PRETRAINED_DIM << " dimensions\n";
-    ifstream in(conf["words"].as<string>().c_str());
+  if (params.words_file != "") {
+    pretrained[kUNK] = vector<float>(params.pretrained_dim, 0);
+    cerr << "Loading from " << params.words_file << " with" << params.pretrained_dim << " dimensions\n";
+    ifstream in(params.words_file.c_str());
     string line;
     getline(in, line);
-    vector<float> v(PRETRAINED_DIM, 0);
+    vector<float> v(params.pretrained_dim, 0);
     string word;
     while (getline(in, line)) {
       istringstream lin(line);
       lin >> word;
-      for (unsigned i = 0; i < PRETRAINED_DIM; ++i) lin >> v[i];
+      for (unsigned i = 0; i < params.pretrained_dim; ++i) lin >> v[i];
       unsigned id = corpus.get_or_add_word(word);
       pretrained[id] = v;
     }
@@ -638,20 +559,19 @@ int main(int argc, char** argv) {
 
   Model model;
   ParserBuilder parser(&model, pretrained);
-  if (conf.count("model")) {
-    ifstream in(conf["model"].as<string>().c_str());
-    boost::archive::text_iarchive ia(in);
-    ia >> model;
+  if (params.model_file != "") {
+    TextFileLoader loader(params.model_file);
+    loader.populate(model);
   }
 
   // OOV words will be replaced by UNK tokens
-  corpus.load_correct_actionsDev(conf["dev_data"].as<string>());
+  corpus.load_correct_actionsDev(params.dev_file);
   //TRAINING
-  if (conf.count("train")) {
+  if (params.train) {
     signal(SIGINT, signal_callback_handler);
 
     Trainer* sgd = NULL;
-    unsigned method = conf["train_methods"].as<unsigned>();
+    unsigned method = params.train_methods;
     if(method == 0)
         sgd = new SimpleSGDTrainer(model,0.1, 0.1);
     else if(method == 1)
@@ -691,9 +611,9 @@ int main(int argc, char** argv) {
            tot_seen += 1;
            const vector<unsigned>& sentence=corpus.sentences[order[si]];
            vector<unsigned> tsentence=sentence;
-           if (unk_strategy == 1) {
+           if (params.unk_strategy) {
              for (auto& w : tsentence)
-               if (singletons.count(w) && dynet::rand01() < unk_prob) w = kUNK;
+               if (singletons.count(w) && dynet::rand01() < params.unk_prob) w = kUNK;
            }
 	   const vector<unsigned>& sentencePos=corpus.sentencesPos[order[si]]; 
 	   const vector<unsigned>& actions=corpus.correct_act_sent[order[si]];
@@ -750,20 +670,25 @@ int main(int argc, char** argv) {
         cerr << "  **dev (iter=" << iter << " epoch=" << (tot_seen / corpus.nsentences) << ")\tllh=" << llh << " ppl: " << exp(llh / trs) << " err: " << (trs - right) / trs << " uas: " << (correct_heads / total_heads) << "\t[" << dev_size << " sents in " << std::chrono::duration<double, std::milli>(t_end-t_start).count() << " ms]" << endl;
         if (correct_heads > best_correct_heads) {
           best_correct_heads = correct_heads;
-          ofstream out(fname);
-          boost::archive::text_oarchive oa(out);
-          oa << model;
+
+      	  ostringstream part_os;
+	  part_os << "parser"
+     		<< '_' << params.layers
+     		<< '_' << params.input_dim
+     		<< '_' << params.action_dim
+     		<< '_' << params.pos_dim
+     		<< '_' << params.rel_dim
+     		<< '_' << params.bilstm_input_dim
+     		<< '_' << params.bilstm_hidden_dim
+     		<< '_' << params.attention_hidden_dim
+     		<< "-pid" << getpid()
+		<< "-part" << (tot_seen/corpus.nsentences) << ".params";
+	  const string part = part_os.str();
+ 
+	  TextFileSaver saver("model/"+part);
+	  saver.save(model);  
           // Create a soft link to the most recent model in order to make it
           // easier to refer to it in a shell script.
-          if (!softlinkCreated) {
-            string softlink = " latest_model";
-            if (system((string("rm -f ") + softlink).c_str()) == 0 && 
-                system((string("ln -s ") + fname + softlink).c_str()) == 0) {
-              cerr << "Created " << softlink << " as a soft link to " << fname 
-                   << " for convenience." << endl;
-            }
-            softlinkCreated = true;
-          }
         }
       }
     }
