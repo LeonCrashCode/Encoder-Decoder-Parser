@@ -1,4 +1,4 @@
-This implementation is based on the [dynet1.1 library](https://github.com/clab/dynet) for this software to function. The paper is "Encoder-Decoder Shift-Reduce Syntactic Parsing".
+This implementation is based on the [dynet2.0 library](https://github.com/clab/dynet) for this software to function. The paper is "Encoder-Decoder Shift-Reduce Syntactic Parsing".
 
 #### Building
 
@@ -15,7 +15,7 @@ The preparation of training, development and test data are the same as the work 
 
 Dependency parsing
 
-    ./dependency-parser -T [training oracle] -d [development oracle] --layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --rel_dim 20 --action_dim 40 -t -P --dynet-mem 2400 --train_methods 3
+    ./dependency-parser --dynet-mem 2400 --train_file [training oracle] --dev_file [development oracle] --words_file [pretrained word embeddings] --layers 2 --action_dim 40 --input_dim 64 --pos_dim 6 --pretrained_dim 100 --rel_dim 20 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 --train_methods 3 --train --use_pos --unk_strategy --unk_prob 0.2 --pdrop 0.3 
 
 Constituent parsing
 
@@ -25,7 +25,7 @@ Constituent parsing
 
 Dependency parsing
 
-    ./dependency-parser -T [training oracle] -d [test oracle] --layers 2  --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --rel_dim 20 --action_dim 40 -P --dynet-mem 2400 -m [model] > [output]
+    ./dependency-parser --dynet-mem 2400 --train_file [training oracle] --dev_file [test oracle] --words_file [pretrained word embeddings] --layers 2 --action_dim 40 --input_dim 64 --pos_dim 6 --pretrained_dim 100 --rel_dim 20 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 --train_methods 3 --use_pos > [output]
 
 Constituent parsing
 
