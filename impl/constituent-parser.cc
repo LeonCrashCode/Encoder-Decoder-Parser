@@ -28,7 +28,7 @@
 // dictionaries
 dynet::Dict termdict, ntermdict, adict, posdict;
 
-bool requested_stop =false;
+volatile bool requested_stop =false;
 unsigned ACTION_SIZE = 0;
 unsigned VOCAB_SIZE = 0;
 unsigned NT_SIZE = 0;
@@ -227,10 +227,6 @@ Expression log_prob_parser(ComputationGraph* hg,
         Expression t = const_lookup(*hg, p_t, sent.lc[i]);
         args.push_back(t2l);
         args.push_back(t);
-      }
-      else{
-        args.push_back(t2l);
-        args.push_back(zeroes(*hg,{params.pretrained_dim}));
       }
       input_expr.push_back(rectify(affine_transform(args)));
     }
@@ -809,7 +805,6 @@ int main(int argc, char** argv) {
         double dwords = 0;
 	if(params.samples !=0){
         	auto t_start = chrono::high_resolution_clock::now();
-		const vector<int> actions;
         	for (unsigned sii = 0; sii < test_size; ++sii) {
            		const auto& sentence=dev_corpus.sents[sii];
 			const vector<int>& actions=dev_corpus.actions[sii];
@@ -820,16 +815,15 @@ int main(int argc, char** argv) {
              			int ti = 0;
              			for (auto a : pred) {
                				if (adict.convert(a)[0] == 'N') {
-                 				out << " (" << ntermdict.convert(action2NTindex.find(a)->second);
+                 				cout << " (" << ntermdict.convert(action2NTindex.find(a)->second);
                				} else if (adict.convert(a)[0] == 'S') {
-                     				out << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti++]) << ")";
-               				} else out << ')';
+                     				cout << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti++]) << ")";
+               				} else cout << ')';
              			}
-             			out << endl;
+             			cout << endl;
            		}
        		}
 	}
-	else{
         	auto t_start = chrono::high_resolution_clock::now();
         	for (unsigned sii = 0; sii < test_size; ++sii) {
            		const auto& sentence=dev_corpus.sents[sii];
@@ -877,7 +871,6 @@ int main(int argc, char** argv) {
         	}
 
        		cerr<<"F1score: "<<newfmeasure<<"\n";
-      }
     
   }
 }
