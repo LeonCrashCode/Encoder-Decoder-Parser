@@ -1,10 +1,9 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
 
 foreach(TARGET
-	constituent-parser
 	dependency-parser
 	)
-  ADD_EXECUTABLE(${TARGET} ${TARGET}.cc oracle.cc)
+  ADD_EXECUTABLE(${TARGET} ${TARGET}.cc)
   if (WITH_CUDA_BACKEND)
     target_link_libraries(${TARGET} gdynet ${LIBS})
     add_dependencies(${TARGET} dynetcuda)
