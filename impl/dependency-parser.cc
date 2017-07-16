@@ -359,13 +359,14 @@ if(params.debug)	std::cerr<<"attention ok\n";
       Expression n_combo = rectify(combo);
       Expression rt = affine_transform({rtbias, combo2rt, n_combo});
 if(params.debug)	std::cerr<<"to action layer ok\n";
-      Expression adiste = log_softmax(rt, current_valid_actions);
+      Expression rt_s = select_rows(rt, current_valid_actions);
+      Expression adiste = log_softmax(rt_s);
       vector<float> adist = as_vector(hg->incremental_forward(adiste));
-      double best_score = adist[current_valid_actions[0]];
+      double best_score = adist[0];
       unsigned best_a = current_valid_actions[0];
       for (unsigned i = 1; i < current_valid_actions.size(); ++i) {
-        if (adist[current_valid_actions[i]] > best_score) {
-          best_score = adist[current_valid_actions[i]];
+        if (adist[i] > best_score) {
+          best_score = adist[i];
           best_a = current_valid_actions[i];
         }
       }
@@ -376,7 +377,12 @@ if(params.debug)	std::cerr<<"best action "<<best_a<<" " << setOfActions[best_a]<
         if (best_a == action) { (*right)++; }
       }
       ++action_count;
-      log_probs.push_back(pick(adiste, action));
+      unsigned w = 0;
+      for(; w< current_valid_actions.size(); w++){
+        if(current_valid_actions[w] == action) break;
+      }
+      assert(w!=current_valid_actions.size());
+      log_probs.push_back(pick(adiste, w));
       if(results) results->push_back(action);
 
       // add current action to action LSTM
