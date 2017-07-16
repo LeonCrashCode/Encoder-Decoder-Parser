@@ -38,6 +38,7 @@ using namespace std;
 
 Params params;
 
+vector<unsigned> possible_actions;
 unordered_map<unsigned, vector<float>> pretrained;
 
 struct ParserBuilder {
@@ -298,7 +299,7 @@ if(params.debug)	std::cerr<<"bilstm ok\n";
 if(params.debug)	std::cerr<<"action index " << action_count<<"\n";
      // get list of possible actions for the current parser state
       vector<unsigned> current_valid_actions;
-      for (unsigned a = 0; a < ACTION_SIZE; ++a) {
+      for (auto a: possible_actions) {
         if (IsActionForbidden(setOfActions[a], bufferi.size(), stacki.size(), stacki))
           continue;
         current_valid_actions.push_back(a);
@@ -516,13 +517,10 @@ int main(int argc, char** argv) {
   const string fname = os.str();
   cerr << "Writing parameters to file: " << fname << endl;
 
-//=========================================================================================================================
-
   corpus.load_correct_actions(params.train_file);	
   const unsigned kUNK = corpus.get_or_add_word(cpyp::Corpus::UNK);
   kROOT_SYMBOL = corpus.get_or_add_word(ROOT_SYMBOL);
 
-  //reading pretrained words embeddings
   if (params.words_file != "") {
     pretrained[kUNK] = vector<float>(params.pretrained_dim, 0);
     cerr << "Loading from " << params.words_file << " with" << params.pretrained_dim << " dimensions\n";
@@ -554,9 +552,10 @@ int main(int argc, char** argv) {
   VOCAB_SIZE = corpus.nwords + 1;
   ACTION_SIZE = corpus.nactions + 1;
   POS_SIZE = corpus.npos + 10;  // bad way of dealing with the fact that we may see new POS tags in the test set
+  possible_actions.resize(corpus.nactions);
+  for (unsigned i = 0; i < corpus.nactions; ++i)
+    possible_actions[i] = i;
 
-//=============================================================================================================================
-  
   Model model;
   ParserBuilder parser(&model, pretrained);
   if (params.model_file != "") {
@@ -601,7 +600,11 @@ int main(int argc, char** argv) {
     cerr << "TRAINING STARTED AT: " << localtime(&time_start) << endl;
     while(!requested_stop) {
       ++iter;
+      {
+      ComputationGraph hg;
+      vector<Expression> batch_nll;
       for (unsigned sii = 0; sii < status_every_i_iterations; ++sii) {
+
            if (si == corpus.nsentences) {
              si = 0;
              if (first) { first = false; } else { sgd->update_epoch(); }
@@ -615,22 +618,24 @@ int main(int argc, char** argv) {
              for (auto& w : tsentence)
                if (singletons.count(w) && dynet::rand01() < params.unk_prob) w = kUNK;
            }
-	   const vector<unsigned>& sentencePos=corpus.sentencesPos[order[si]]; 
-	   const vector<unsigned>& actions=corpus.correct_act_sent[order[si]];
-           ComputationGraph hg;
+           const vector<unsigned>& sentencePos=corpus.sentencesPos[order[si]];
+           const vector<unsigned>& actions=corpus.correct_act_sent[order[si]];
            Expression nll = parser.log_prob_parser(&hg,sentence,tsentence,sentencePos,actions,corpus.actions,corpus.intToWords,&right,NULL,true);
            double lp = as_scalar(hg.incremental_forward(nll));
            if (lp < 0) {
              cerr << "Log prob < 0 on sentence " << order[si] << ": lp=" << lp << endl;
              assert(lp >= 0.0);
            }
-           hg.backward(nll);
-           sgd->update(1.0);
+           batch_nll.push_back(nll);
            llh += lp;
            ++si;
            trs += actions.size();
       }
+      hg.backward(sum(batch_nll));
+      sgd->update(1.0);
       sgd->status();
+      }
+
       time_t time_now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
       cerr << "update #" << iter << " (epoch " << (tot_seen / corpus.nsentences) << " |time=" << localtime(&time_now) << ")\tllh: "<< llh<<" ppl: " << exp(llh / trs) << " err: " << (trs - right) / trs << endl;
       llh = trs = right = 0;
