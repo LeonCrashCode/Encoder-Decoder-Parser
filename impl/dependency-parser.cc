@@ -240,15 +240,19 @@ Expression log_prob_parser(ComputationGraph* hg,
       vector<Expression> args = {lb, w2l, w}; // learn embeddings
       if (params.use_pos) { // learn POS tag?
         Expression p = lookup(*hg, p_p, sentPos[i]);
-        if(train) p = dropout(p,params.pdrop);
+        if(train) p = dropout(p, params.pdrop);
         args.push_back(p2l);
         args.push_back(p);
       }
       if (pretrained.size() > 0 &&  pretrained.count(raw_sent[i])) {  // include fixed pretrained vectors?
         Expression t = const_lookup(*hg, p_t, raw_sent[i]);
-        if(train) t = dropout(t,params.pdrop);
+        if(train) t = dropout(t, params.pdrop);
         args.push_back(t2l);
         args.push_back(t);
+      }
+      else{
+        args.push_back(t2l);
+        args.push_back(zeroes(*hg,{params.pretrained_dim}));
       }
       input_expr.push_back(rectify(affine_transform(args)));
     }
@@ -298,7 +302,7 @@ if(params.debug)	std::cerr<<"bilstm ok\n";
 if(params.debug)	std::cerr<<"action index " << action_count<<"\n";
      // get list of possible actions for the current parser state
       vector<unsigned> current_valid_actions;
-      for (unsigned a = 0; a < ACTION_SIZE; ++a) {
+      for (unsigned a = 0; a < ACTION_SIZE -1; a++) {
         if (IsActionForbidden(setOfActions[a], bufferi.size(), stacki.size(), stacki))
           continue;
         current_valid_actions.push_back(a);
@@ -489,40 +493,38 @@ int main(int argc, char** argv) {
   unsigned status_every_i_iterations = 100;
 
   get_args(argc, argv, params);
-  
+
   params.state_input_dim = params.action_dim + params.bilstm_hidden_dim*4;
   params.state_hidden_dim = params.bilstm_hidden_dim * 2;
-  
+
   cerr << "Unknown word strategy: ";
-  if (params.unk_strategy) {
+  if (params.unk_strategy == 1) {
     cerr << "STOCHASTIC REPLACEMENT\n";
   } else {
     abort();
   }
   assert(params.unk_prob >= 0.); assert(params.unk_prob <= 1.);
   ostringstream os;
-  os << "parser"
+  os << "parser_" << (params.use_pos ? "pos" : "nopos")
      << '_' << params.layers
      << '_' << params.input_dim
-     << '_' << params.action_dim 
+     << '_' << params.action_dim
      << '_' << params.pos_dim
      << '_' << params.rel_dim
      << '_' << params.bilstm_input_dim
      << '_' << params.bilstm_hidden_dim
      << '_' << params.attention_hidden_dim
+     << '_' << params.state_hidden_dim
      << "-pid" << getpid() << ".params";
 
   int best_correct_heads = 0;
   const string fname = os.str();
   cerr << "Writing parameters to file: " << fname << endl;
-
-//=========================================================================================================================
-
+  
   corpus.load_correct_actions(params.train_file);	
   const unsigned kUNK = corpus.get_or_add_word(cpyp::Corpus::UNK);
   kROOT_SYMBOL = corpus.get_or_add_word(ROOT_SYMBOL);
 
-  //reading pretrained words embeddings
   if (params.words_file != "") {
     pretrained[kUNK] = vector<float>(params.pretrained_dim, 0);
     cerr << "Loading from " << params.words_file << " with" << params.pretrained_dim << " dimensions\n";
@@ -555,8 +557,6 @@ int main(int argc, char** argv) {
   ACTION_SIZE = corpus.nactions + 1;
   POS_SIZE = corpus.npos + 10;  // bad way of dealing with the fact that we may see new POS tags in the test set
 
-//=============================================================================================================================
-  
   Model model;
   ParserBuilder parser(&model, pretrained);
   if (params.model_file != "") {
@@ -611,7 +611,7 @@ int main(int argc, char** argv) {
            tot_seen += 1;
            const vector<unsigned>& sentence=corpus.sentences[order[si]];
            vector<unsigned> tsentence=sentence;
-           if (params.unk_strategy) {
+           if (params.unk_strategy == 1) {
              for (auto& w : tsentence)
                if (singletons.count(w) && dynet::rand01() < params.unk_prob) w = kUNK;
            }
@@ -670,25 +670,22 @@ int main(int argc, char** argv) {
         cerr << "  **dev (iter=" << iter << " epoch=" << (tot_seen / corpus.nsentences) << ")\tllh=" << llh << " ppl: " << exp(llh / trs) << " err: " << (trs - right) / trs << " uas: " << (correct_heads / total_heads) << "\t[" << dev_size << " sents in " << std::chrono::duration<double, std::milli>(t_end-t_start).count() << " ms]" << endl;
         if (correct_heads > best_correct_heads) {
           best_correct_heads = correct_heads;
+          ostringstream part_os;
+          part_os << "parser"
+                << '_' << params.layers
+                << '_' << params.input_dim
+                << '_' << params.action_dim
+                << '_' << params.pos_dim
+                << '_' << params.rel_dim
+                << '_' << params.bilstm_input_dim
+                << '_' << params.bilstm_hidden_dim
+                << '_' << params.attention_hidden_dim
+                << "-pid" << getpid()
+                << "-part" << (tot_seen/corpus.nsentences) << ".params";
+          const string part = part_os.str();
 
-      	  ostringstream part_os;
-	  part_os << "parser"
-     		<< '_' << params.layers
-     		<< '_' << params.input_dim
-     		<< '_' << params.action_dim
-     		<< '_' << params.pos_dim
-     		<< '_' << params.rel_dim
-     		<< '_' << params.bilstm_input_dim
-     		<< '_' << params.bilstm_hidden_dim
-     		<< '_' << params.attention_hidden_dim
-     		<< "-pid" << getpid()
-		<< "-part" << (tot_seen/corpus.nsentences) << ".params";
-	  const string part = part_os.str();
- 
-	  TextFileSaver saver("model/"+part);
-	  saver.save(model);  
-          // Create a soft link to the most recent model in order to make it
-          // easier to refer to it in a shell script.
+          TextFileSaver saver("model/"+part);
+          saver.save(model);
         }
       }
     }
