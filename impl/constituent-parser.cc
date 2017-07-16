@@ -289,7 +289,7 @@ if(params.debug) cerr<< "action_count " << action_count <<"\n";
 	current_valid_actions.clear();
 if(params.debug) cerr<< "nopen_parens: "<<nopen_parens<<"\n";
       for (unsigned a = 0; a < ACTION_SIZE; a++) {
-        if (IsActionForbidden_Discriminative(adict.convert(a), prev_a, bufferi.size(), stacki.size(), nopen_parens))
+        if (IsActionForbidden_Discriminative(adict.convert((int)a), prev_a, bufferi.size(), stacki.size(), nopen_parens))
           continue;
         current_valid_actions.push_back(a);
       }
@@ -351,24 +351,25 @@ if(params.debug)	std::cerr<<"to action layer ok\n";
  
       if (sample) r_t = r_t * params.alpha;
       // adist = log_softmax(r_t, current_valid_actions)
-      Expression adiste = log_softmax(r_t, current_valid_actions);
+      Expression r_t_s = select_rows(r_t, current_valid_actions);
+      Expression adiste = log_softmax(r_t_s);
       vector<float> adist = as_vector(hg->incremental_forward(adiste));
-      double best_score = adist[current_valid_actions[0]];
+      double best_score = adist[0];
       unsigned model_action = current_valid_actions[0];
       if (sample) {
         double p = rand01();
         assert(current_valid_actions.size() > 0);
         unsigned w = 0;
         for (; w < current_valid_actions.size(); ++w) {
-          p -= exp(adist[current_valid_actions[w]]);
+          p -= exp(adist[w]);
           if (p < 0.0) { break; }
         }
         if (w == current_valid_actions.size()) w--;
         model_action = current_valid_actions[w];
       } else { // max
         for (unsigned i = 1; i < current_valid_actions.size(); ++i) {
-          if (adist[current_valid_actions[i]] > best_score) {
-            best_score = adist[current_valid_actions[i]];
+          if (adist[i] > best_score) {
+            best_score = adist[i];
             model_action = current_valid_actions[i];
           }
         }
@@ -387,7 +388,13 @@ if(params.debug)	std::cerr<<"to action layer ok\n";
       //cerr << "prob ="; for (unsigned i = 0; i < adist.size(); ++i) { cerr << ' ' << adict.convert(i) << ':' << adist[i]; }
       //cerr << endl;
       ++action_count;
-      log_probs.push_back(pick(adiste, action));
+      unsigned w = 0;
+      for(;w< current_valid_actions.size(); w++){
+        if(current_valid_actions[w] == action) break;
+      } 
+      assert(w != current_valid_actions.size());
+    
+      log_probs.push_back(pick(adiste, w));
       if(results) results->push_back(action);
 
       // add current action to action LSTM

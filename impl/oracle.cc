@@ -112,5 +112,74 @@ void TopDownOracle::load_oracle(const string& file, bool is_training) {
   cerr << "    cumulative nonterminal vocab size: " << nd->size() << endl;
   cerr << "    cumulative         pos vocab size: " << pd->size() << endl;
 }
-
+void StandardOracle::load_oracle(const string& file, bool is_training) {
+  cerr << "Loading top-down oracle from " << file << " [" << (is_training ? "training" : "non-training") << "] ...\n";
+  ifstream in(file.c_str());
+  assert(in);
+  const string kSHIFT = "SHIFT";
+  const int kSHIFT_INT = ad->convert("SHIFT");
+  int lc = 0;
+  string line;
+  vector<int> cur_acts;
+  while(getline(in, line)) {
+    ++lc;
+    //cerr << "line number = " << lc << endl;
+    cur_acts.clear();
+    if (line.size() == 0 || (line[0] == '#' && line[2] == '(')) continue;
+    sents.resize(sents.size() + 1);
+    auto& cur_sent = sents.back();
+    if (is_training) {  // at training time, we load both "UNKified" versions of the data, and raw versions
+      ReadSentenceView(line, pd, &cur_sent.pos);
+      getline(in, line);
+      ReadSentenceView(line, d, &cur_sent.raw);
+      getline(in, line);
+      ReadSentenceView(line, d, &cur_sent.lc);
+      getline(in, line);
+      ReadSentenceView(line, d, &cur_sent.unk);
+    } else { // at test time, we ignore the raw strings and just use the "UNKified" versions
+      ReadSentenceView(line, pd, &cur_sent.pos);
+      getline(in, line);
+      getline(in, line);
+      ReadSentenceView(line, d, &cur_sent.lc);
+      getline(in, line);
+      ReadSentenceView(line, d, &cur_sent.unk);
+      cur_sent.raw = cur_sent.unk;
+    }
+    lc += 3;
+    if (!cur_sent.SizesMatch()) {
+      cerr << "Mismatched lengths of input strings in oracle before line " << lc << endl;
+      abort();
+    }
+    int termc = 0;
+    while(getline(in, line)) {
+      ++lc;
+      //cerr << "line number = " << lc << endl;
+      if (line.size() == 0) break;
+      assert(line.find(' ') == string::npos);
+      if (line.find("RIGHT-ARC(") == 0) {
+        ard->convert(line.substr(10, line.size() - 11));
+        cur_acts.push_back(ad->convert(line));
+      } else if (line.find("LEFT-ARC(") == 0) {
+        ard->convert(line.substr(9, line.size() - 10));
+        cur_acts.push_back(ad->convert(line));
+      } else if (line == kSHIFT) {
+        cur_acts.push_back(kSHIFT_INT);
+        termc++;
+      } else {
+        cerr << "Malformed input in line " << lc << endl;
+        abort();
+      }
+    }
+    actions.push_back(cur_acts);
+    if (termc != sents.back().size()) {
+      cerr << "Mismatched number of tokens and SHIFTs in oracle before line " << lc << endl;
+      abort();
+    }
+  }
+  cerr << "Loaded " << sents.size() << " sentences\n";
+  cerr << "    cumulative      action vocab size: " << ad->size() << endl;
+  cerr << "    cumulative    terminal vocab size: " << d->size() << endl;
+  cerr << "    cumulative         arc vocab size: " << ard->size() << endl;
+  cerr << "    cumulative         pos vocab size: " << pd->size() << endl;
+}
 } // namespace parser

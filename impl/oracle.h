@@ -32,11 +32,6 @@ struct Oracle {
   static void ReadSentenceView(const std::string& line, dynet::Dict* dict, std::vector<int>* sent);
 };
 
-// oracle that predicts nonterminal symbols with a NT(X) action
-// the action NT(X) effectively introduces an "(X" on the stack
-// # (S (NP ...
-// raw tokens
-// tokens with OOVs replaced
 class TopDownOracle : public Oracle {
  public:
   TopDownOracle(dynet::Dict* termdict, dynet::Dict* adict, dynet::Dict* pdict, dynet::Dict* nontermdict) :
@@ -49,25 +44,15 @@ class TopDownOracle : public Oracle {
   dynet::Dict* nd; // dictionary of nonterminal types
 };
 
-// oracle that predicts nonterminal symbols with a NT(X) action
-// the action NT(X) effectively introduces an "(X" on the stack
-// # (S (NP ...
-// raw tokens
-// tokens with OOVs replaced
-class TopDownOracleGen : public Oracle {
+class StandardOracle : public Oracle {
  public:
-  TopDownOracleGen(dynet::Dict* termdict, dynet::Dict* adict, dynet::Dict* pdict, dynet::Dict* nontermdict) :
-      Oracle(termdict, adict, pdict), nd(nontermdict) {}
-  void load_oracle(const std::string& file);
-  dynet::Dict* nd; // dictionary of nonterminal types
-};
-
-class TopDownOracleGen2 : public Oracle {
- public:
-  TopDownOracleGen2(dynet::Dict* termdict, dynet::Dict* adict, dynet::Dict* pdict, dynet::Dict* nontermdict) :
-      Oracle(termdict, adict, pdict), nd(nontermdict) {}
-  void load_oracle(const std::string& file);
-  dynet::Dict* nd; // dictionary of nonterminal types
+  StandardOracle(dynet::Dict* termdict, dynet::Dict* adict, dynet::Dict* pdict, dynet::Dict* arcdict) :
+      Oracle(termdict, adict, pdict), ard(arcdict) {}
+  // if is_training is true, then both the "raw" tokens and the mapped tokens
+  // will be read, and both will be available. if false, then only the mapped
+  // tokens will be available
+  void load_oracle(const std::string& file, bool is_training);
+  dynet::Dict* ard; // dictionary of nonterminal types
 };
 
 } // namespace parser
