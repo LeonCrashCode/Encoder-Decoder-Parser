@@ -195,7 +195,6 @@ Expression log_prob_parser(ComputationGraph* hg,
 		     bool train,
 		     bool sample) {
 if(params.debug) cerr<<"sent size: "<<sent.size()<<"\n";
-
     l2rbuilder.new_graph(*hg);
     r2lbuilder.new_graph(*hg);
     l2rbuilder.start_new_sequence();
@@ -240,6 +239,8 @@ if(params.debug) cerr<<"sent size: "<<sent.size()<<"\n";
           wordid = sent.unk[i];
       if (!train)
           wordid = sent.unk[i];
+
+if(params.debug) cerr<<termdict.convert(wordid)<<" "<<posdict.convert(sent.pos[i]) << " " << termdict.convert(sent.lc[i])<<"\n";
 
       Expression w =lookup(*hg, p_w, wordid);
       if(train) w = dropout(w,params.pdrop);
@@ -314,6 +315,13 @@ if(params.debug)	std::cerr<<"action index " << action_count<<"\n";
       }
 if(params.debug)	std::cerr<<"possible action " << current_valid_actions.size()<<"\n";
       //stack attention
+
+if(params.debug) {
+	for(unsigned i = 0; i < current_valid_actions.size(); i ++){
+		std::cerr<<current_valid_actions[i]<<":"<<current_valid_actions[i]<<" ";
+	}
+	std::cerr<<"\n";
+}
       Expression prev_h = state_lstm.final_h()[0];
       vector<Expression> s_att;
       vector<Expression> s_input;
@@ -326,13 +334,13 @@ if(params.debug)	std::cerr<<"possible action " << current_valid_actions.size()<<
       Expression s_att_col = transpose(concatenate_cols(s_att));
       Expression s_attexp = softmax(s_att_col * s_att2attexp);
 
-if(params.debug){
+/*if(params.debug){
 	vector<float> s_see = as_vector(hg->incremental_forward(s_attexp));
 	for(unsigned i = 0; i < s_see.size(); i ++){
 		cerr<<s_see[i]<<" ";
 	}
 	cerr<<"\n";
-}
+}*/
       Expression s_input_col = concatenate_cols(s_input);
       Expression s_att_pool = s_input_col * s_attexp;
 
@@ -347,14 +355,14 @@ if(params.debug){
       Expression b_att_col = transpose(concatenate_cols(b_att));
       Expression b_attexp = softmax(b_att_col * b_att2attexp);
 
-if(params.debug){
+/*if(params.debug){
         vector<float> b_see = as_vector(hg->incremental_forward(b_attexp));
         for(unsigned i = 0; i < b_see.size(); i ++){
                 cerr<<b_see[i]<<" ";
         }
         cerr<<"\n";
 }
-
+*/
       Expression b_input_col = concatenate_cols(b_input);
       Expression b_att_pool = b_input_col * b_attexp;
 
@@ -678,6 +686,7 @@ int main(int argc, char** argv) {
            ++si;
            trs += actions.size();
 	   words += sentence.size();
+	   exit(1);
       }
       sgd->status();
       
