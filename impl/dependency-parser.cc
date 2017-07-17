@@ -22,9 +22,10 @@
 #include "dynet/lstm.h"
 #include "dynet/rnn.h"
 #include "dynet/io.h"
+#include "dynet/dict.h"
 
 #include "impl/oracle.h"
-#include "implcl-args.h"
+#include "impl/cl-args.h"
 
 dynet::Dict termdict, arcdict, adict, posdict;
 
@@ -41,6 +42,7 @@ Params params;
 
 unordered_map<unsigned, vector<float>> pretrained;
 vector<bool> singletons; // used during training
+vector<unsigned> possible_actions;
 
 struct ParserBuilder {
 
@@ -135,7 +137,7 @@ static bool IsActionForbidden(const string& a, unsigned bsize, unsigned ssize, c
 
 // take a vector of actions and return a parse tree (labeling of every
 // word position with its head's position)
-static map<int,int> compute_heads(unsigned sent_len, const vector<unsigned>& actions,  map<int,string>* pr = nullptr) {
+static map<int,int> compute_heads(unsigned sent_len, const vector<int>& actions,  map<int,string>* pr = nullptr) {
   map<int,int> heads;
   map<int,string> r;
   map<int,string>& rels = (pr ? *pr : r);
@@ -145,7 +147,7 @@ static map<int,int> compute_heads(unsigned sent_len, const vector<unsigned>& act
     bufferi[sent_len - i] = i;
   bufferi[0] = -999;
   for (auto action: actions) { // loop over transitions for sentence
-    const string& actionString=adict.convert((int)action);
+    const string& actionString=adict.convert(action);
     const char ac = actionString[0];
     const char ac2 = actionString[1];
     if (ac =='S' && ac2=='H') {  // SHIFT
@@ -189,8 +191,9 @@ Expression log_prob_parser(ComputationGraph* hg,
 		     const parser::Sentence& sent,
                      const vector<int>& correct_actions,
                      double *right,
-		     vector<unsigned>* results,
-		     bool train) {
+		     vector<int>* results,
+		     bool train,
+		     bool sample) {
 if(params.debug) cerr<<"sent size: "<<sent.size()<<"\n";
 
     l2rbuilder.new_graph(*hg);
@@ -238,7 +241,7 @@ if(params.debug) cerr<<"sent size: "<<sent.size()<<"\n";
       if (!train)
           wordid = sent.unk[i];
 
-      Expression w =lookup(*hg, p_w, sent[i]);
+      Expression w =lookup(*hg, p_w, wordid);
       if(train) w = dropout(w,params.pdrop);
       vector<Expression> args = {lb, w2l, w}; // learn embeddings
       if (params.use_pos) { // learn POS tag?
@@ -285,7 +288,6 @@ if(params.debug)	std::cerr<<"bilstm ok\n";
  
     unsigned stack_buffer_split = 0;
     vector<Expression> log_probs;
-    string rootword;
     unsigned action_count = 0;  // incremented at each prediction
     
     vector<Expression> l2rhc = l2rbuilder.final_s();
@@ -305,8 +307,8 @@ if(params.debug)	std::cerr<<"bilstm ok\n";
 if(params.debug)	std::cerr<<"action index " << action_count<<"\n";
      // get list of possible actions for the current parser state
       vector<unsigned> current_valid_actions;
-      for (unsigned a = 0; a < ACTION_SIZE -1; a++) {
-        if (IsActionForbidden(setOfActions[a], bufferi.size(), stacki.size(), stacki))
+      for (auto a : possible_actions) {
+        if (IsActionForbidden(adict.convert((int)a), bufferi.size(), stacki.size(), stacki))
           continue;
         current_valid_actions.push_back(a);
       }
@@ -361,21 +363,36 @@ if(params.debug)	std::cerr<<"attention ok\n";
       Expression combo = affine_transform({combobias, h2combo, prev_h, s_att2combo, s_att_pool, b_att2combo, b_att_pool});
       Expression n_combo = rectify(combo);
       Expression rt = affine_transform({rtbias, combo2rt, n_combo});
+      if (sample) rt = rt * params.alpha;
 if(params.debug)	std::cerr<<"to action layer ok\n";
       Expression rt_s = select_rows(rt, current_valid_actions);
       Expression adiste = log_softmax(rt_s);
       vector<float> adist = as_vector(hg->incremental_forward(adiste));
       double best_score = adist[0];
       unsigned best_a = current_valid_actions[0];
-      for (unsigned i = 1; i < current_valid_actions.size(); ++i) {
-        if (adist[i] > best_score) {
-          best_score = adist[i];
-          best_a = current_valid_actions[i];
+      
+      if (sample) {
+        double p = rand01();
+        assert(current_valid_actions.size() > 0);
+        unsigned w = 0;
+        for (; w < current_valid_actions.size(); ++w) {
+          p -= exp(adist[w]);
+          if (p < 0.0) { break; }
         }
+        if (w == current_valid_actions.size()) w--;
+        best_a = current_valid_actions[w];
+      } else { // max
+         for (unsigned i = 1; i < current_valid_actions.size(); ++i) {
+           if (adist[i] > best_score) {
+           	best_score = adist[i];
+           	best_a = current_valid_actions[i];
+           }
+         }
       }
-if(params.debug)	std::cerr<<"best action "<<best_a<<" " << setOfActions[best_a]<<"\n";
+
+if(params.debug)	std::cerr<<"best action "<<best_a<<" " << adict.convert(best_a)<<"\n";
       unsigned action = best_a;
-      if (build_training_graph) {  // if we have reference actions (for training) use the reference action
+      if (train) {  // if we have reference actions (for training) use the reference action
         action = correct_actions[action_count];
         if (best_a == action) { (*right)++; }
       }
@@ -392,7 +409,7 @@ if(params.debug)	std::cerr<<"best action "<<best_a<<" " << setOfActions[best_a]<
       Expression actione = lookup(*hg, p_a, action);
       state_lstm.add_input(concatenate({actione, s_att_pool, b_att_pool}));
       // do action
-      const string& actionString=setOfActions[action];
+      const string& actionString=adict.convert(action);
       const char ac = actionString[0];
       const char ac2 = actionString[1];
 
@@ -417,7 +434,6 @@ if(params.debug)	std::cerr<<"action lookup ok\n";
         stacki.pop_back();
         (ac == 'R' ? headi : depi) = stacki.back();
         stacki.pop_back();
-        if (headi == sent.size() - 1) rootword = intToWords.find(sent[depi])->second;
         // composed = cbias + H * head + D * dep + R * relation
         stacki.push_back(headi);
       }
@@ -550,7 +566,7 @@ int main(int argc, char** argv) {
       istringstream lin(line);
       lin >> word;
       for (unsigned i = 0; i < params.pretrained_dim; ++i) lin >> v[i];
-      unsigned id = corpus.get_or_add_word(word);
+      unsigned id = termdict.convert(word);
       pretrained[id] = v;
     }
   }

@@ -1,7 +1,6 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
 
 foreach(TARGET
-	constituent-parser
 	dependency-parser
 	)
   ADD_EXECUTABLE(${TARGET} ${TARGET}.cc oracle.cc)

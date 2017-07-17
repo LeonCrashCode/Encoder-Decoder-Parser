@@ -81,6 +81,8 @@ def get_tags_tokens_lowercase(tree):
     return [output_tags, output_tokens, output_lowercase]    
 
 def canArc(head, chil, stk, buf, tree):
+    if tree[chil][-2] != head:
+	return False
     for i in stk:
 	if tree[i][-2] == chil:
 	    return False
@@ -122,6 +124,8 @@ def get_actions(tree):
 		buf = buf[1:]
 	    else:
 		break
+    output_actions.append("SHIFT")
+    output_actions.append("LEFT-ARC(root)")
     if len(stk) != 1 or len(buf) != 0:
 	return False, output_actions
     else:
@@ -155,6 +159,10 @@ def main():
         assert len(tokens) == len(lowercase)
         unkified = unkify(tokens, words_list)    
         flag, output_actions = get_actions(tree)
+	tags.append("ROOT")
+        tokens.append("ROOT")
+        lowercase.append("ROOT")
+        unkified.append("ROOT")
 	if flag:
 	    print ' '.join(tags)
 	    print ' '.join(tokens)
