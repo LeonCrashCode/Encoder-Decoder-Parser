@@ -41,6 +41,8 @@ Params params;
 unordered_map<unsigned, vector<float>> pretrained;
 vector<bool> singletons; // used during training
 
+vector<unsigned> possible_actions;
+
 struct ParserBuilder {
 
   LSTMBuilder state_lstm;
@@ -288,8 +290,8 @@ if(params.debug)	std::cerr<<"bilstm ok\n";
 if(params.debug) cerr<< "action_count " << action_count <<"\n";
 	current_valid_actions.clear();
 if(params.debug) cerr<< "nopen_parens: "<<nopen_parens<<"\n";
-      for (unsigned a = 0; a < ACTION_SIZE; a++) {
-        if (IsActionForbidden_Discriminative(adict.convert((int)a), prev_a, bufferi.size(), stacki.size(), nopen_parens))
+      for (auto a : possible_actions) {
+        if (IsActionForbidden_Discriminative(adict.convert(a), prev_a, bufferi.size(), stacki.size(), nopen_parens))
           continue;
         current_valid_actions.push_back(a);
       }
@@ -621,10 +623,12 @@ int main(int argc, char** argv) {
     action2NTindex[i] = nt;
   }
 
-  NT_SIZE = ntermdict.size();
-  POS_SIZE = posdict.size();
-  VOCAB_SIZE = termdict.size();
-  ACTION_SIZE = adict.size();
+  NT_SIZE = ntermdict.size()+10;
+  POS_SIZE = posdict.size()+10;
+  VOCAB_SIZE = termdict.size()+10;
+  ACTION_SIZE = adict.size()+10;
+
+  for(unsigned i = 0; i < adict.size(); ++i) possible_actions.push_back(i);
 
 //============================================================================================================
 
