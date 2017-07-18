@@ -1,3 +1,5 @@
+### This file is the copy of the get_oracle.py from RNNG https://github.com/clab/rnng
+
 import sys
 import constituent_dict
 

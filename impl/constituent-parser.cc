@@ -201,7 +201,7 @@ Expression log_prob_parser(ComputationGraph* hg,
     vector<Expression> input_expr;
     
 	
-    if (train) {
+/*    if (train) {
       l2rbuilder.set_dropout(params.pdrop);
       r2lbuilder.set_dropout(params.pdrop);
       state_lstm.set_dropout(params.pdrop);
@@ -210,7 +210,7 @@ Expression log_prob_parser(ComputationGraph* hg,
       r2lbuilder.disable_dropout();
       state_lstm.disable_dropout();
     }
-
+*/
     for (unsigned i = 0; i < sent.size(); ++i) {
       int wordid = sent.raw[i]; // this will be equal to unk at dev/test
       if (train && singletons.size() > wordid && singletons[wordid] && rand01() > params.unk_prob)
@@ -219,14 +219,17 @@ Expression log_prob_parser(ComputationGraph* hg,
 	  wordid = sent.unk[i];
 
       Expression w =lookup(*hg, p_w, wordid);
+      if(train) w = dropout(w, params.pdrop);
       vector<Expression> args = {lb, w2l, w}; // learn embeddings
       if (params.use_pos) { // learn POS tag?
         Expression p = lookup(*hg, p_p, sent.pos[i]);
+	if(train) p = dropout(p, params.pdrop);
         args.push_back(p2l);
         args.push_back(p);
       }
       if (pretrained.size() > 0 &&  pretrained.count(sent.lc[i])) {  // include fixed pretrained vectors?
         Expression t = const_lookup(*hg, p_t, sent.lc[i]);
+	if(train) t = dropout(t, params.pdrop);
         args.push_back(t2l);
         args.push_back(t);
       }
@@ -744,7 +747,8 @@ int main(int argc, char** argv) {
              if (adict.convert(a)[0] == 'N') {
                out << '(' << ntermdict.convert(action2NTindex.find(a)->second) << ' ';
              } else if (adict.convert(a)[0] == 'S') {
-               out << '(' << posdict.convert(sentence.pos[ti]) << ' ' << termdict.convert(sentence.raw[ti++]) << ") ";
+               out << '(' << posdict.convert(sentence.pos[ti]) << ' ' << termdict.convert(sentence.raw[ti]) << ") ";
+		ti ++;
              } else out << ") ";
            }
            out << endl;
@@ -828,7 +832,8 @@ int main(int argc, char** argv) {
                				if (adict.convert(a)[0] == 'N') {
                  				cout << " (" << ntermdict.convert(action2NTindex.find(a)->second);
                				} else if (adict.convert(a)[0] == 'S') {
-                     				cout << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti++]) << ")";
+                     				cout << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti]) << ")";
+						ti ++;
                				} else cout << ')';
              			}
              			cout << endl;
@@ -851,7 +856,8 @@ int main(int argc, char** argv) {
              			if (adict.convert(a)[0] == 'N') {
                				out << '(' << ntermdict.convert(action2NTindex.find(a)->second) << ' ';
              			} else if (adict.convert(a)[0] == 'S') {
-					out << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti++]) << ")";
+					out << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti]) << ")";
+					ti ++;
              			} else out << ") ";
            		}
            		out << endl;
