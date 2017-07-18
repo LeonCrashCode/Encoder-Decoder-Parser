@@ -318,7 +318,7 @@ if(params.debug)	std::cerr<<"possible action " << current_valid_actions.size()<<
 
 if(params.debug) {
 	for(unsigned i = 0; i < current_valid_actions.size(); i ++){
-		std::cerr<<current_valid_actions[i]<<":"<<current_valid_actions[i]<<" ";
+		std::cerr<<current_valid_actions[i]<<":"<<adict.convert(current_valid_actions[i])<<" ";
 	}
 	std::cerr<<"\n";
 }
@@ -598,7 +598,6 @@ int main(int argc, char** argv) {
   VOCAB_SIZE = termdict.size()+10;
   ACTION_SIZE = adict.size()+10;
 
-  possible_actions.resize(adict.size());
   for(unsigned i = 0; i < adict.size(); ++i) possible_actions.push_back(i);
 
   cerr<<"action:\n";
@@ -686,7 +685,6 @@ int main(int argc, char** argv) {
            ++si;
            trs += actions.size();
 	   words += sentence.size();
-	   exit(1);
       }
       sgd->status();
       
