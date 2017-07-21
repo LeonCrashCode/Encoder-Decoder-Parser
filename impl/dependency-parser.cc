@@ -559,9 +559,7 @@ int main(int argc, char** argv) {
 //=====================================================================================================================
 
   parser::StandardOracle corpus(&termdict, &adict, &posdict, &arcdict);
-  parser::StandardOracle dev_corpus(&termdict, &adict, &posdict, &arcdict);
   corpus.load_oracle(params.train_file, true);
-  dev_corpus.load_oracle(params.dev_file, true);
 
   if (params.words_file != "") {
     cerr << "Loading from " << params.words_file << " with" << params.pretrained_dim << " dimensions\n";
@@ -580,6 +578,8 @@ int main(int argc, char** argv) {
   }
 
   termdict.freeze();
+  termdict.set_unk("UNK");
+  adict.convert("RIGHT-ARC(preconj)"); // dev data has new possible action
   adict.freeze();
   arcdict.freeze();
   posdict.freeze();
@@ -593,11 +593,12 @@ int main(int argc, char** argv) {
       if (wc.second == 1) singletons[wc.first] = true;
   }
 
-  ARC_SIZE = arcdict.size()+10;
-  POS_SIZE = posdict.size()+10;
-  VOCAB_SIZE = termdict.size()+10;
-  ACTION_SIZE = adict.size()+10;
+  ARC_SIZE = arcdict.size();
+  POS_SIZE = posdict.size();
+  VOCAB_SIZE = termdict.size();
+  ACTION_SIZE = adict.size();
 
+  
   for(unsigned i = 0; i < adict.size(); ++i) possible_actions.push_back(i);
 
   cerr<<"action:\n";
@@ -614,6 +615,11 @@ int main(int argc, char** argv) {
   for(unsigned i = 0; i < arcdict.size(); i ++){
     cerr<<i<<":"<<arcdict.convert(i)<<"\n";
   }
+
+  parser::StandardOracle dev_corpus(&termdict, &adict, &posdict, &arcdict);
+  parser::StandardOracle test_corpus(&termdict, &adict, &posdict, &arcdict);
+  if(params.dev_file != "") dev_corpus.load_oracle(params.dev_file, true);
+  if(params.test_file != "") test_corpus.load_oracle(params.test_file, true);
 
 //==========================================================================================================================
   
@@ -763,8 +769,8 @@ int main(int argc, char** argv) {
     delete sgd;
   } // should do training?
   else{ // do test evaluation
-        ofstream out("test.out");
-        unsigned test_size = dev_corpus.size();
+	ofstream out("test.out");
+        unsigned test_size = test_corpus.size();
 
         double llh = 0;
         double trs = 0;
@@ -774,8 +780,8 @@ int main(int argc, char** argv) {
         double total_heads = 0;
         if(params.samples !=0){
                 for (unsigned sii = 0; sii < test_size; ++sii) {
-                        const auto& sentence=dev_corpus.sents[sii];
-                        const vector<int>& actions=dev_corpus.actions[sii];
+                        const auto& sentence=test_corpus.sents[sii];
+                        const vector<int>& actions=test_corpus.actions[sii];
                         for (unsigned z = 0; z < params.samples; ++z) {
                                 ComputationGraph hg;
                                 vector<int> pred;
@@ -790,8 +796,8 @@ int main(int argc, char** argv) {
         }
         auto t_start = std::chrono::high_resolution_clock::now();
         for (unsigned sii = 0; sii < test_size; ++sii) {
-                const auto& sentence=dev_corpus.sents[sii];
-                const vector<int>& actions=dev_corpus.actions[sii];
+                const auto& sentence=test_corpus.sents[sii];
+                const vector<int>& actions=test_corpus.actions[sii];
                 ComputationGraph hg;
                 vector<int> pred;
                 Expression nll = parser.log_prob_parser(&hg, sentence, actions, &right, &pred, false, false);

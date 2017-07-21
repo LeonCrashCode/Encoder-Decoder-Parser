@@ -580,9 +580,7 @@ int main(int argc, char** argv) {
 //=====================================================================================================
   
   parser::TopDownOracle corpus(&termdict, &adict, &posdict, &ntermdict);
-  parser::TopDownOracle dev_corpus(&termdict, &adict, &posdict, &ntermdict);
   corpus.load_oracle(params.train_file, true);
-  dev_corpus.load_oracle(params.dev_file, true);	
   corpus.load_bdata(params.bracketed_file);
 
   if (params.words_file != "") {
@@ -633,6 +631,11 @@ int main(int argc, char** argv) {
 
   for(unsigned i = 0; i < adict.size(); ++i) possible_actions.push_back(i);
 
+  parser::TopDownOracle dev_corpus(&termdict, &adict, &posdict, &ntermdict);
+  parser::TopDownOracle test_corpus(&termdict, &adict, &posdict, &ntermdict);
+  if(params.dev_file != "") dev_corpus.load_oracle(params.dev_file, true);
+  if(params.test_file != "") test_corpus.load_oracle(params.test_file, true);
+  
 //============================================================================================================
 
   Model model;
@@ -813,7 +816,7 @@ int main(int argc, char** argv) {
   } // should do training?
   else{ // do test evaluation
 	ofstream out("test.out");
-        unsigned test_size = dev_corpus.size();
+        unsigned test_size = test_corpus.size();
         double llh = 0;
         double trs = 0;
         double right = 0;
@@ -821,8 +824,8 @@ int main(int argc, char** argv) {
 	if(params.samples !=0){
         	auto t_start = chrono::high_resolution_clock::now();
         	for (unsigned sii = 0; sii < test_size; ++sii) {
-           		const auto& sentence=dev_corpus.sents[sii];
-			const vector<int>& actions=dev_corpus.actions[sii];
+           		const auto& sentence=test_corpus.sents[sii];
+			const vector<int>& actions=test_corpus.actions[sii];
            		for (unsigned z = 0; z < params.samples; ++z) {
              			ComputationGraph hg;
              			vector<unsigned> pred;
@@ -842,8 +845,8 @@ int main(int argc, char** argv) {
 	}
         	auto t_start = chrono::high_resolution_clock::now();
         	for (unsigned sii = 0; sii < test_size; ++sii) {
-           		const auto& sentence=dev_corpus.sents[sii];
-           		const vector<int>& actions=dev_corpus.actions[sii];
+           		const auto& sentence=test_corpus.sents[sii];
+           		const vector<int>& actions=test_corpus.actions[sii];
            		dwords += sentence.size();
            		ComputationGraph hg;
            		vector<unsigned> pred;
