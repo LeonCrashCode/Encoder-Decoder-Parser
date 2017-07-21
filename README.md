@@ -21,6 +21,8 @@ Constituent parsing
 
     ./conparser -T [training oracle] -d [development oracle] -C [development data in bracketed format]--layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 -t -P -D 0.5 --cnn-mem 1700
 
+We provide the trained model [dependency model](https://drive.google.com/open?id=0B1VhP65vISjockpyZTZPci1tcVk) and [constituent model](https://drive.google.com/open?id=0B1VhP65vISjoZ3c5Z2toVkYxaEU).
+
 ### Decoding
 
 Dependency parsing
