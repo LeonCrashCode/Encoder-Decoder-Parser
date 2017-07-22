@@ -479,7 +479,7 @@ void output_conll(const parser::Sentence& sentence,
                   const map<int,int>& hyp, const map<int,string>& rel_hyp, ofstream *out) {
   for (unsigned i = 0; i < (sentence.size()-1); ++i) {
     auto index = i + 1;
-    string wit = termdict.convert(sentence.raw[i]);
+    string wit = sentence.surfaces[i];
     auto pit = posdict.convert(sentence.pos[i]);
     assert(hyp.find(i) != hyp.end());
     auto hyp_head = hyp.find(i)->second + 1;
@@ -618,8 +618,8 @@ int main(int argc, char** argv) {
 
   parser::StandardOracle dev_corpus(&termdict, &adict, &posdict, &arcdict);
   parser::StandardOracle test_corpus(&termdict, &adict, &posdict, &arcdict);
-  if(params.dev_file != "") dev_corpus.load_oracle(params.dev_file, true);
-  if(params.test_file != "") test_corpus.load_oracle(params.test_file, true);
+  if(params.dev_file != "") dev_corpus.load_oracle(params.dev_file, false);
+  if(params.test_file != "") test_corpus.load_oracle(params.test_file, false);
 
 //==========================================================================================================================
   

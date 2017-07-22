@@ -633,8 +633,8 @@ int main(int argc, char** argv) {
 
   parser::TopDownOracle dev_corpus(&termdict, &adict, &posdict, &ntermdict);
   parser::TopDownOracle test_corpus(&termdict, &adict, &posdict, &ntermdict);
-  if(params.dev_file != "") dev_corpus.load_oracle(params.dev_file, true);
-  if(params.test_file != "") test_corpus.load_oracle(params.test_file, true);
+  if(params.dev_file != "") dev_corpus.load_oracle(params.dev_file, false);
+  if(params.test_file != "") test_corpus.load_oracle(params.test_file, false);
   
 //============================================================================================================
 
@@ -749,7 +749,7 @@ int main(int argc, char** argv) {
              if (adict.convert(a)[0] == 'N') {
                out << '(' << ntermdict.convert(action2NTindex.find(a)->second) << ' ';
              } else if (adict.convert(a)[0] == 'S') {
-               out << '(' << posdict.convert(sentence.pos[ti]) << ' ' << termdict.convert(sentence.raw[ti]) << ") ";
+               out << '(' << posdict.convert(sentence.pos[ti]) << ' ' << sentence.surfaces[ti] << ") ";
 		ti ++;
              } else out << ") ";
            }
@@ -834,7 +834,7 @@ int main(int argc, char** argv) {
                				if (adict.convert(a)[0] == 'N') {
                  				cout << " (" << ntermdict.convert(action2NTindex.find(a)->second);
                				} else if (adict.convert(a)[0] == 'S') {
-                     				cout << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti]) << ")";
+                     				cout << " (" << posdict.convert(sentence.pos[ti]) << " " << sentence.surfaces[ti] << ")";
 						ti ++;
                				} else cout << ')';
              			}
@@ -858,7 +858,7 @@ int main(int argc, char** argv) {
              			if (adict.convert(a)[0] == 'N') {
                				out << '(' << ntermdict.convert(action2NTindex.find(a)->second) << ' ';
              			} else if (adict.convert(a)[0] == 'S') {
-					out << " (" << posdict.convert(sentence.pos[ti]) << " " << termdict.convert(sentence.raw[ti]) << ")";
+					out << " (" << posdict.convert(sentence.pos[ti]) << " " << sentence.surfaces[ti] << ")";
 					ti ++;
              			} else out << ") ";
            		}

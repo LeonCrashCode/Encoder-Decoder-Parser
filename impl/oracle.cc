@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <fstream>
+#include <strstream>
 
 #include "dynet/dict.h"
 
@@ -68,11 +69,14 @@ void TopDownOracle::load_oracle(const string& file, bool is_training) {
     } else { // at test time, we ignore the raw strings and just use the "UNKified" versions
       ReadSentenceView(line, pd, &cur_sent.pos);
       getline(in, line);
+      istrstream istr(line.c_str());
+      string word;
+      while(istr>>word) cur_sent.surfaces.push_back(word);
+      ReadSentenceView(line, d, &cur_sent.raw);
       getline(in, line);
       ReadSentenceView(line, d, &cur_sent.lc);
       getline(in, line);
       ReadSentenceView(line, d, &cur_sent.unk);
-      cur_sent.raw = cur_sent.unk;
     }
     lc += 3;
     if (!cur_sent.SizesMatch()) {
@@ -139,11 +143,14 @@ void StandardOracle::load_oracle(const string& file, bool is_training) {
     } else { // at test time, we ignore the raw strings and just use the "UNKified" versions
       ReadSentenceView(line, pd, &cur_sent.pos);
       getline(in, line);
+      istrstream istr(line.c_str());
+      string word;
+      while(istr>>word) cur_sent.surfaces.push_back(word);
+      ReadSentenceView(line, d, &cur_sent.raw);
       getline(in, line);
       ReadSentenceView(line, d, &cur_sent.lc);
       getline(in, line);
       ReadSentenceView(line, d, &cur_sent.unk);
-      cur_sent.raw = cur_sent.unk;
     }
     lc += 3;
     if (!cur_sent.SizesMatch()) {
