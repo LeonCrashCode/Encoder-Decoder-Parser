@@ -34,4 +34,10 @@ Constituent parsing
     ./conparser -T [training oracle] -p [test oracle] -C [test data in bracketed format] --layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 -P --cnn-mem 1700 -m [model]
 
 ### Cite
+    @article{liu2017encoder,
+        title={Encoder-Decoder Shift-Reduce Syntactic Parsing},
+        author={Liu, Jiangming and Zhang, Yue},
+        journal={arXiv preprint arXiv:1706.07905},
+        year={2017}
+    }
 
