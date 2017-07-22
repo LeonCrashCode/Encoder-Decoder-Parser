@@ -7,6 +7,8 @@ This implementation is based on the [dynet2.0 library](https://github.com/clab/d
     cmake .. -DEIGEN3_INCLUDE_DIR=/path/to/eigen
     make    
 
+Add -DBACKEND=cuda to cmake for GPU compile. 
+
 ### Data
 
 The preparation of training, development and test data are the same as the work of [stack-LSTM](https://github.com/clab/lstm-parser) on dependency parsing, and the work of [recurrent neural network grammar](https://github.com/clab/rnng) on constituent parsing. After that, the training, development and test oracle files could be got.
