@@ -25,11 +25,11 @@ Constituent parsing
 
 Dependency parsing
 
-    ./dependency-parser --dynet-mem 2400 --train_file [training oracle] --dev_file [test oracle] --words_file [pretrained word embeddings] --layers 2 --action_dim 40 --input_dim 64 --pos_dim 6 --pretrained_dim 100 --rel_dim 20 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 --train_methods 3 --use_pos > [output]
+    ./dependency-parser --dynet-mem 2400 --train_file [training oracle] --dev_file [test oracle] --words_file [pretrained word embeddings] --layers 2 --action_dim 40 --input_dim 64 --pos_dim 6 --pretrained_dim 100 --rel_dim 20 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 --train_methods 3 --use_pos
 
 Constituent parsing
 
-    ./constituent-parser -T [training oracle] -p [test oracle] -C [test data in bracketed format] --layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 -P --dybet-mem 1700 -m [model] > [output]
+    ./constituent-parser -T [training oracle] -p [test oracle] -C [test data in bracketed format] --layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 -P --dybet-mem 1700 -m [model]
 
 ### Cite
 
