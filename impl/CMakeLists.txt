@@ -2,7 +2,9 @@ CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
 
 foreach(TARGET
 	dependency-parser
+	dependency-parser-batch
 	constituent-parser
+	constituent-parser-batch
 	)
   ADD_EXECUTABLE(${TARGET} ${TARGET}.cc oracle.cc)
   if (WITH_CUDA_BACKEND)

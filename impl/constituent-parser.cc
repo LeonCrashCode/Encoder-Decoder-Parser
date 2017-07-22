@@ -697,8 +697,7 @@ int main(int argc, char** argv) {
 	   const vector<int>& actions=corpus.actions[order[si]];
 	   
            ComputationGraph hg;
-	   vector<unsigned> results;
-           Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,&results,true,false);
+           Expression nll = parser.log_prob_parser(&hg,sentence,actions,&right,NULL,true,false);
 
            double lp = as_scalar(hg.incremental_forward(nll));
            if (lp < 0) {

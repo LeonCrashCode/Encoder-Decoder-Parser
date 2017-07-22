@@ -665,6 +665,8 @@ int main(int argc, char** argv) {
     while(!requested_stop) {
       ++iter;
       auto time_start = chrono::system_clock::now();
+      ComputationGraph hg;
+      vector<Expression> batch_nll;
       for (unsigned sii = 0; sii < status_every_i_iterations; ++sii) {
            if (si == corpus.size()) {
              si = 0;
@@ -676,21 +678,18 @@ int main(int argc, char** argv) {
    	   auto& sentence = corpus.sents[order[si]];
            const vector<int>& actions=corpus.actions[order[si]];
 
-	   ComputationGraph hg;
            Expression nll = parser.log_prob_parser(&hg, sentence, actions, &right, NULL, true, false);
 
-           double lp = as_scalar(hg.incremental_forward(nll));
-           if (lp < 0) {
-             cerr << "Log prob < 0 on sentence " << order[si] << ": lp=" << lp << endl;
-             assert(lp >= 0.0);
-           }
-           hg.backward(nll);
-           sgd->update(1.0);
-           llh += lp;
+	   batch_nll.push_back(nll);
            ++si;
            trs += actions.size();
 	   words += sentence.size();
       }
+      Expression batchsum = sum(batch_nll);
+      double lp = as_scalar(hg.incremental_forward(batchsum));
+      hg.backward(batchsum); 
+      sgd->update(1.0);
+      llh += lp;
       sgd->status();
       
       auto time_now = chrono::system_clock::now();
