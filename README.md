@@ -27,7 +27,7 @@ We provide the trained model [dependency model](https://drive.google.com/open?id
 
 Dependency parsing
 
-    ./depparser --dynet-mem 2400 --train_file [training oracle] --dev_file [test oracle] --words_file [pretrained word embeddings] --layers 2 --action_dim 40 --input_dim 64 --pos_dim 6 --pretrained_dim 100 --rel_dim 20 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 --train_methods 3 --use_pos
+    ./depparser --dynet-mem 2400 --train_file [training oracle] --test_file [test oracle] --words_file [pretrained word embeddings] --layers 2 --action_dim 40 --input_dim 64 --pos_dim 6 --pretrained_dim 100 --rel_dim 20 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 --train_methods 3 --use_pos
 
 Constituent parsing
 
