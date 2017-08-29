@@ -45,10 +45,10 @@ Constituent parsing
 
 ### Cite
 
-    @article{liu2017encoder,
+    @inproceedings{liu2017encoder,
         title={Encoder-Decoder Shift-Reduce Syntactic Parsing},
         author={Liu, Jiangming and Zhang, Yue},
-        journal={arXiv preprint arXiv:1706.07905},
+        booktitle={IWPT},
         year={2017}
     
 
