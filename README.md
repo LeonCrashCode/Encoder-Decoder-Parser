@@ -45,12 +45,13 @@ Constituent parsing
 
 ### Citation
 
-    @inproceedings{liu2017encoder
-    title={Encoder-Decoder Shift-Reduce Syntactic Parsing},
-    author={Liu, Jiangming and Zhang, Yue},
-    booktitle={IWPT},
-    year={2017},
-    pages={105-114}}
+    @inproceedings{liu2017encoder   
+        title={Encoder-Decoder Shift-Reduce Syntactic Parsing}，  
+        author={Liu, Jiangming and Zhang, Yue},   
+        booktitle={IWPT},   
+        year={2017},   
+        pages={105-114}   
+        }
     
     
 
