@@ -1,4 +1,4 @@
-This implementation is based on the [dynet2.0 library](https://github.com/clab/dynet) for this software to function. The paper is "Encoder-Decoder Shift-Reduce Syntactic Parsing".
+This implementation is based on the [dynet2.0 library](https://github.com/clab/dynet) for this software to function. The paper is "Encoder-Decoder Shift-Reduce Syntactic Parsing", and the codes of experiments are based on the branch v_old.
 
 ### Building
 
