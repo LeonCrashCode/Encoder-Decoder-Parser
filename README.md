@@ -31,7 +31,7 @@ Dependency parsing
 
 Constituent parsing
 
-    ./constituent-parser -T [training con oracle] -d [development con oracle] -C [development data in bracketed format]--layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 -t -P -D 0.5 --dynet-mem 1700
+    ./constituent-parser --dynet-mem 1700 --train_file [training con oracle] --dev_file [development con oracle] --bracketed_file [development data in bracketed format] --layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 --words_file [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 --train --use_pos --unk_strategy
 
 ### Decoding
 
@@ -41,7 +41,7 @@ Dependency parsing
 
 Constituent parsing
 
-    ./constituent-parser -T [training con oracle] -p [test con oracle] -C [test data in bracketed format] --layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 -P --dybet-mem 1700 -m [model]
+    ./constituent-parser --train_file [training con oracle] --test_file [test con oracle] -C [test data in bracketed format] --layers 2 --input_dim 64 --pos_dim 6 --bilstm_input_dim 100 --bilstm_hidden_dim 200 --attention_hidden_dim 50 -w [pretrained word embeddings] --pretrained_dim 100 --action_dim 40 --use_pos --dybet-mem 1700 -m [model]
 
 ### Citation
 
